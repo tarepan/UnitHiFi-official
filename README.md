@@ -1,10 +1,19 @@
-# Speech Resynthesis from Discrete Disentangled Self-Supervised Representations
-Implementation of the method described in the [Speech Resynthesis from Discrete Disentangled Self-Supervised Representations](https://arxiv.org/abs/2104.00355).
+<div align="center">
+
+# UnitHiFi : Speech Resynthesis from unit with HiFi-GAN <!-- omit in toc -->
+[![OpenInColab]][notebook]
+[![paper_badge]][paper]
+
+</div>
+
+Clone of the official ***UnitHiFi*** implementation.  
+
+[paper]: https://arxiv.org/abs/2104.00355
+[paper_badge]: http://img.shields.io/badge/paper-arxiv.2104.00355-B31B1B.svg
+[notebook]: https://colab.research.google.com/github/tarepan/UnitHiFi-official/blob/main/unithifi.ipynb
+[OpenInColab]: https://colab.research.google.com/assets/colab-badge.svg
 
 <p align="center"><img width="70%" src="img/fig.png" /></p>
-
-__Abstract__: We propose using self-supervised discrete representations for the task of speech resynthesis. To generate disentangled representation, we separately extract low-bitrate representations for speech content, prosodic information, and speaker identity. This allows to synthesize speech in a controllable manner. We analyze various state-of-the-art, self-supervised representation learning methods and shed light on the advantages of each method while considering reconstruction quality and disentanglement properties. Specifically, we evaluate the F0 reconstruction, speaker identification performance (for both resynthesis and voice conversion), recordings' intelligibility, and overall quality using subjective human evaluation. Lastly, we demonstrate how these representations can be used for an ultra-lightweight speech codec. Using the obtained representations, we can get to a rate of 365 bits per second while providing better speech quality than the baseline methods.
-
 
 ## Quick Links
 - [Samples](https://speechbot.github.io/resynthesis/index.html)
