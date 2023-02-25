@@ -24,7 +24,7 @@ from scipy.io.wavfile import write
 from dataset import CodeDataset, parse_manifest, mel_spectrogram, \
     MAX_WAV_VALUE
 from utils import AttrDict
-from models import CodeGenerator
+from model import CodeGenerator
 
 h = None
 device = None

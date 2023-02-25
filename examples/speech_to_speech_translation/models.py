@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models import CodeGenerator, Generator
+from models import Generator
 
 
 class VariancePredictor(nn.Module):

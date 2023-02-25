@@ -20,7 +20,7 @@ from torch.utils.data import DistributedSampler, DataLoader
 from torch.distributed import init_process_group
 from torch.nn.parallel import DistributedDataParallel
 from dataset import F0Dataset, get_dataset_filelist
-from models import Quantizer
+from model import Quantizer
 from utils import scan_checkpoint, load_checkpoint, save_checkpoint, build_env, \
     AttrDict
 

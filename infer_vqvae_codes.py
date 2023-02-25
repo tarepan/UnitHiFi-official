@@ -18,7 +18,7 @@ import torch
 
 from utils import AttrDict
 from inference import load_checkpoint, scan_checkpoint
-from models import CodeGenerator
+from model import CodeGenerator
 
 h = None
 device = None
