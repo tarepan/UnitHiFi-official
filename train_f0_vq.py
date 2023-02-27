@@ -39,15 +39,14 @@ def train(a, h):
     device = torch.device('cuda')
 
     generator = Quantizer(h).to(device)
-
     print(generator)
+
+    # Restore (1/2)
     os.makedirs(a.checkpoint_path, exist_ok=True)
     print("checkpoints directory : ", a.checkpoint_path)
-
     cp_g = None
     if os.path.isdir(a.checkpoint_path):
         cp_g = scan_checkpoint(a.checkpoint_path, 'g_')
-
     steps = 0
     if cp_g is None:
         last_epoch = -1
@@ -58,11 +57,10 @@ def train(a, h):
         steps = state_dict_g['steps'] + 1
         last_epoch = state_dict_g['epoch']
 
+    # Init & Restore (2/2)
     optim_g = torch.optim.AdamW(generator.parameters(), h.learning_rate, betas=[h.adam_b1, h.adam_b2])
-
     if state_dict_g is not None:
         optim_g.load_state_dict(state_dict_g['optim_g'])
-
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=h.lr_decay, last_epoch=last_epoch)
 
     # Params
@@ -103,8 +101,8 @@ def train(a, h):
             x = {k: v.to(device, non_blocking=True) for k, v in x.items()}
 
             # Forward/Loss/Backward/Optim
-            y_g_hat, commit_loss, metrics = generator(**x)
-            loss_total = F.mse_loss(y_g_hat, y) + lambda_commit * commit_loss[0]
+            y_g_hat, commit_losses, metrics = generator(**x)
+            loss_total = F.mse_loss(y_g_hat, y) + lambda_commit * commit_losses[0]
             loss_total.backward()
             optim_g.step()
 
@@ -118,13 +116,13 @@ def train(a, h):
                 save_checkpoint(checkpoint_path, {'generator': generator.state_dict(), 'optim_g': optim_g.state_dict(), 'steps': steps, 'epoch': epoch})
             ## Tensorboard summary logging
             if steps % a.summary_interval == 0:
-                f0_commit_loss = commit_loss[0]
-                f0_metrics = metrics[0]
-                sw.add_scalar("training/gen_loss_total", loss_total,                steps)
-                sw.add_scalar("training/commit_error", f0_commit_loss,              steps)
-                sw.add_scalar("training/used_curr", f0_metrics['used_curr'].item(), steps)
-                sw.add_scalar("training/entropy",   f0_metrics['entropy'].item(),   steps)
-                sw.add_scalar("training/usage",     f0_metrics['usage'].item(),     steps)
+                commit_loss = commit_losses[0]
+                metric = metrics[0]
+                sw.add_scalar("training/gen_loss_total", loss_total,            steps)
+                sw.add_scalar("training/commit_error", commit_loss,             steps)
+                sw.add_scalar("training/used_curr", metric['used_curr'].item(), steps)
+                sw.add_scalar("training/entropy",   metric['entropy'].item(),   steps)
+                sw.add_scalar("training/usage",     metric['usage'].item(),     steps)
             ## Validation
             if steps % a.validation_interval == 0:
                 generator.eval()
@@ -137,12 +135,12 @@ def train(a, h):
                         x = {k: v.to(device) for k, v in x.items()}
                         y = y.to(device)
                         # Forward/Loss
-                        y_g_hat, commit_loss, _ = generator(**x)
-                        f0_commit_loss = commit_loss[0]
-                        val_err_tot += (F.mse_loss(y_g_hat, y).item() + lambda_commit * f0_commit_loss)
+                        y_g_hat, commit_losses, _ = generator(**x)
+                        commit_loss = commit_losses[0]
+                        val_err_tot += (F.mse_loss(y_g_hat, y).item() + lambda_commit * commit_loss)
                     val_err = val_err_tot / (j + 1)
-                    sw.add_scalar("validation/mel_spec_error", val_err,      steps)
-                    sw.add_scalar("validation/commit_error", f0_commit_loss, steps)
+                    sw.add_scalar("validation/mel_spec_error", val_err,   steps)
+                    sw.add_scalar("validation/commit_error", commit_loss, steps)
                 generator.train()
             # /Validation & Logging
 
