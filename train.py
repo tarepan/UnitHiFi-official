@@ -35,9 +35,14 @@ def train(a, h):
     torch.cuda.manual_seed(h.seed)
     device = torch.device('cuda')
 
+    # Models
     generator = CodeGenerator(h).to(device)
     mpd = MultiPeriodDiscriminator().to(device)
     msd = MultiScaleDiscriminator().to(device)
+
+    # Mode flags
+    learn_f0_vq      = h.get('f0_vq_params', None)
+    learn_content_vq = h.get('code_vq_params', None)
 
     print(generator)
     os.makedirs(a.checkpoint_path, exist_ok=True)
@@ -110,19 +115,20 @@ def train(a, h):
             x = {k: v.to(device, non_blocking=True) for k, v in x.items()}
 
             y_g_hat = generator(**x)
-            if h.get('f0_vq_params', None) or h.get('code_vq_params', None):
-                y_g_hat, commit_losses, metrics = y_g_hat
+
+            # Losses from Learnable VQ (primarily for VQVAE_fo)
+            if learn_content_vq or learn_f0_vq:
+                y_g_hat, content_fo_commit_losses, content_fo_metrics = y_g_hat
+                if learn_content_vq:
+                    code_commit_loss = content_fo_commit_losses[0][0]
+                    code_metrics     =       content_fo_metrics[0][0]
+                if learn_f0_vq:
+                    f0_commit_loss   = content_fo_commit_losses[1][0]
+                    f0_metrics       =       content_fo_metrics[1][0]
 
             assert y_g_hat.shape == y.shape, f"Mismatch in vocoder output shape - {y_g_hat.shape} != {y.shape}"
-            if h.get('f0_vq_params', None):
-                f0_commit_loss = commit_losses[1][0]
-                f0_metrics = metrics[1][0]
-            if h.get('code_vq_params', None):
-                code_commit_loss = commit_losses[0][0]
-                code_metrics = metrics[0][0]
 
-            y_g_hat_mel = mel_spectrogram(y_g_hat.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size,
-                                          h.win_size, h.fmin, h.fmax_for_loss)
+            y_g_hat_mel = mel_spectrogram(y_g_hat.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax_for_loss)
 
             optim_d.zero_grad()
 
@@ -152,9 +158,9 @@ def train(a, h):
             loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
             loss_gen_s, losses_gen_s = generator_loss(y_ds_hat_g)
             loss_gen_all = loss_gen_s + loss_gen_f + loss_fm_s + loss_fm_f + loss_mel
-            if h.get('f0_vq_params', None):
+            if learn_f0_vq:
                 loss_gen_all += f0_commit_loss * h.get('lambda_commit', None)
-            if h.get('code_vq_params', None):
+            if learn_content_vq:
                 loss_gen_all += code_commit_loss * h.get('lambda_commit_code', None)
 
             loss_gen_all.backward()
@@ -183,12 +189,12 @@ def train(a, h):
             if steps % a.summary_interval == 0:
                 sw.add_scalar("training/gen_loss_total", loss_gen_all, steps)
                 sw.add_scalar("training/mel_spec_error", mel_error, steps)
-                if h.get('f0_vq_params', None):
+                if learn_f0_vq:
                     sw.add_scalar("training/commit_error", f0_commit_loss, steps)
                     sw.add_scalar("training/used_curr", f0_metrics['used_curr'].item(), steps)
                     sw.add_scalar("training/entropy", f0_metrics['entropy'].item(), steps)
                     sw.add_scalar("training/usage", f0_metrics['usage'].item(), steps)
-                if h.get('code_vq_params', None):
+                if learn_content_vq:
                     sw.add_scalar("training/code_commit_error", code_commit_loss, steps)
                     sw.add_scalar("training/code_used_curr", code_metrics['used_curr'].item(), steps)
                     sw.add_scalar("training/code_entropy", code_metrics['entropy'].item(), steps)
@@ -205,16 +211,14 @@ def train(a, h):
                         x = {k: v.to(device, non_blocking=False) for k, v in x.items()}
 
                         y_g_hat = generator(**x)
-                        if h.get('f0_vq_params', None) or h.get('code_vq_params', None):
+                        if learn_f0_vq or learn_content_vq:
                             y_g_hat, commit_losses, _ = y_g_hat
-
-                        if h.get('f0_vq_params', None):
-                            f0_commit_loss = commit_losses[1][0]
-                            val_err_tot += f0_commit_loss * h.get('lambda_commit', None)
-
-                        if h.get('code_vq_params', None):
-                            code_commit_loss = commit_losses[0][0]
-                            val_err_tot += code_commit_loss * h.get('lambda_commit_code', None)
+                            if learn_f0_vq:
+                                f0_commit_loss = commit_losses[1][0]
+                                val_err_tot += f0_commit_loss * h.get('lambda_commit', None)
+                            if learn_content_vq:
+                                code_commit_loss = commit_losses[0][0]
+                                val_err_tot += code_commit_loss * h.get('lambda_commit_code', None)
                         y_mel = torch.autograd.Variable(y_mel.to(device, non_blocking=False))
                         y_g_hat_mel = mel_spectrogram(y_g_hat.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate,
                                                         h.hop_size, h.win_size, h.fmin, h.fmax_for_loss)
@@ -233,9 +237,9 @@ def train(a, h):
 
                     val_err = val_err_tot / (j + 1)
                     sw.add_scalar("validation/mel_spec_error", val_err, steps)
-                    if h.get('f0_vq_params', None):
+                    if learn_f0_vq:
                         sw.add_scalar("validation/commit_error", f0_commit_loss, steps)
-                    if h.get('code_vq_params', None):
+                    if learn_content_vq:
                         sw.add_scalar("validation/code_commit_error", code_commit_loss, steps)
                 generator.train()
 

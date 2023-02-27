@@ -9,6 +9,10 @@ from models import Generator
 
 
 class Quantizer(nn.Module):
+    """fo VQVAE.
+    
+    Used for Encoder_fo training & Decoder training
+    """
     def __init__(self, h):
         super().__init__()
 
@@ -17,11 +21,22 @@ class Quantizer(nn.Module):
         self.decoder = Decoder(**h.f0_decoder_params)
 
     def forward(self, **kwargs):
-        f0_h = self.encoder(kwargs['f0'])
-        _, f0_h_q, f0_commit_losses, f0_metrics = self.vq(f0_h)
-        f0 = self.decoder(f0_h_q)
+        """
+        Args:
+            kwargs
+                f0 - Ground-Truth fo
+        Returns:
+            reconst - Reconstructed fo
+            commit_losses - VQ commitment loss
+            metrics - VQ metrics
+        """
+        # Ground-Truth is ristricted to fo
+        gt = kwargs['f0']
+        f0_h = self.encoder(gt)
+        _, f0_h_q, commit_losses, metrics = self.vq(f0_h)
+        reconst = self.decoder(f0_h_q)
 
-        return f0, f0_commit_losses, f0_metrics
+        return reconst, commit_losses, metrics
 
 
 class CodeGenerator(Generator):

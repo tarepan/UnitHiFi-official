@@ -129,7 +129,7 @@ python parse_hubert_codes.py \
 ```
 
 ### Encoder<sub>f<sub>o</sub></sub> Training
-train F0 quantizer model (Encoder<sub>f<sub>o</sub></sub>)  
+Train f<sub>o</sub> VQVAE (`Quantizer`) for Encoder<sub>f<sub>o</sub></sub>  
 
 ```bash
 python train_f0_vq.py \
