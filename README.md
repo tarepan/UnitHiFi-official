@@ -57,6 +57,17 @@ Requirements:
    ```
 
 ## Training
+
+For training from scratch, you needs below steps:  
+
+1. Encoder<sub>content</sub> training
+2. z_c extraction
+3. Encoder<sub>f<sub>o</sub></sub> training
+4. z_<sub>f<sub>o</sub></sub> extraction
+5. Decoder training
+
+This repository provides some shortcuts. In minimum case, you needs to execute only step 3 and 5.  
+
 Currently, we support the following training schemes:
 
 | Dataset  | Encoder<sub>c</sub> SSL | Dictionary Size | Config Path                               |
@@ -68,49 +79,23 @@ Currently, we support the following training schemes:
 | VCTK     | CPC                     | 100             | ```configs/VCTK/cpc100_lut.json```        |
 | VCTK     | VQVAE                   | 256             | ```configs/VCTK/vqvae256_lut.json```      |
 
-For all config, you needs following steps:
-
-- Encoder<sub>f<sub>o</sub></sub> training
-- Decoder training
-
-If use CPC | HuBERT, you needs following steps before common steps:
-
-- Content encoding w/ pretrained model
-
-If use VQVAE, you needs following steps before common steps:
-
-- Encoder<sub>c</sub> (VQVAE) training
-- Content encoding w/ trained model
-
-### VQVAE Training & Content Encoding
-(only for VQVAE Encoder<sub>c</sub>)  
-
-First, you will need to download [LibriLight](https://github.com/facebookresearch/libri-light) dataset and move it to ```data/LibriLight```.
-
-Next, train a vqvae model using the following command:
+### 1. Encoder<sub>content</sub> Training
+#### CPC or HuBERT
+It's tough work, but you can try SSL by yourself.  
+Fortunately, pretrained CPC and HuBERT is provided. You can skip this step.  
+#### VQVAE
+First, download [LibriLight](https://github.com/facebookresearch/libri-light) dataset and move it to ```data/LibriLight```.  
+Then, run the training of content VQVAE.  
 ```bash
 python train.py \
 --checkpoint_path checkpoints/ll_vq \
 --config configs/LibriLight/vqvae256.json
 ```
+### 2. z_c Extraction
+#### CPC or HuBERT
+For LJSpeech or VCTK, we provide extracted z_c! In this case, you can skip this step.  
 
-To extract codes:
-```bash
-python infer_vqvae_codes.py \
---input_dir folder_with_wavs_to_code \
---output_dir vqvae_output_folder \
---checkpoint_file checkpoints/ll_vq
-```
-
-To parse output:
-```bash
- python parse_vqvae_codes.py \
- --manifest vqvae_output_file \
- --outdir parsed_vqvae
-```
-
-### CPC / HuBERT Content Encoding
-To quantize new datasets with CPC or HuBERT follow the instructions described in the [GSLM code](https://github.com/pytorch/fairseq/tree/master/examples/textless_nlp/gslm).
+If you hope to encode other datasets, follow the instructions described in the [GSLM code](https://github.com/pytorch/fairseq/tree/master/examples/textless_nlp/gslm).  
 
 To parse CPC output:
 ```bash
@@ -127,17 +112,35 @@ python parse_hubert_codes.py \
 --manifest hubert_tsv_file \
 --outdir parsed_hubert 
 ```
+#### VQVAE
 
-### Encoder<sub>f<sub>o</sub></sub> Training
-Train f<sub>o</sub> VQVAE (`Quantizer`) for Encoder<sub>f<sub>o</sub></sub>  
+To extract codes:
+```bash
+python infer_vqvae_codes.py \
+--input_dir folder_with_wavs_to_code \
+--output_dir vqvae_output_folder \
+--checkpoint_file checkpoints/ll_vq
+```
 
+To parse output:
+```bash
+ python parse_vqvae_codes.py \
+ --manifest vqvae_output_file \
+ --outdir parsed_vqvae
+```
+
+### 3. Encoder<sub>f<sub>o</sub></sub> training
+Train f<sub>o</sub> VQVAE (`Quantizer`) for Encoder<sub>f<sub>o</sub></sub>:
 ```bash
 python train_f0_vq.py \
 --checkpoint_path checkpoints/lj_f0_vq \
 --config configs/LJSpeech/f0_vqvae.json
 ```
+### 4. z_<sub>f<sub>o</sub></sub> extraction
+This step is automatically executed in step 5.  
 
-### Decoder Training
+### 5. Decoder training
+The final step is below:
 ```bash
 python train.py \
 --checkpoint_path checkpoints/lj_vqvae \
@@ -171,6 +174,9 @@ python inference.py \
 --input_code_file datasets/VCTK/cpc100/test.txt \
 --output_dir generations_vctk_to_lj
 ```
+
+## Difference from the Paper
+- Encoder<sub>speaker</sub> is just Embedding, not LSTM
 
 ## Citation
 ```
