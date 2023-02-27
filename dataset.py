@@ -169,6 +169,8 @@ class CodeDataset(torch.utils.data.Dataset):
         """
         Args:
             multispkr - 'Not use speaker' if False else 'How to access speaker name'
+
+            f0_normalize - Whether to normalize fo
         """
         self.audio_files, self.codes = training_files
         random.seed(1234)
@@ -191,11 +193,9 @@ class CodeDataset(torch.utils.data.Dataset):
         self.f0 = f0
         self.f0_normalize = f0_normalize
         self.f0_feats = f0_feats
-        self.f0_stats = None
         self.f0_interp = f0_interp
         self.f0_median = f0_median
-        if f0_stats:
-            self.f0_stats = torch.load(f0_stats)
+        self.f0_stats = torch.load(f0_stats) if f0_stats else None
         self.pad = pad
         self.multispkr = multispkr
         if self.multispkr:
@@ -338,34 +338,24 @@ class CodeDataset(torch.utils.data.Dataset):
 
 
 class F0Dataset(torch.utils.data.Dataset):
-    def __init__(self, training_files, segment_size, sampling_rate,
-                 split=True, n_cache_reuse=1, device=None, multispkr=False,
-                 pad=None, f0_stats=None, f0_normalize=False, f0_feats=False,
-                 f0_median=False, f0_interp=False, vqvae=False):
+    def __init__(self, training_files, segment_size, sampling_rate, split=True, multispkr=False, f0_stats=None, f0_normalize=False):
+        """
+        Args:
+            f0_stats :: str - Path to the fo statistics file
+            f0_normalize :: bool - Whether to normalize the fo
+        """
         self.audio_files, _ = training_files
         random.seed(1234)
         self.segment_size = segment_size
         self.sampling_rate = sampling_rate
         self.split = split
-        self.cached_wav = None
-        self.n_cache_reuse = n_cache_reuse
-        self._cache_ref_count = 0
-        self.device = device
-        self.vqvae = vqvae
         self.f0_normalize = f0_normalize
-        self.f0_feats = f0_feats
-        self.f0_stats = None
-        self.f0_interp = f0_interp
-        self.f0_median = f0_median
-        if f0_stats:
-            self.f0_stats = torch.load(f0_stats)
-        self.pad = pad
+        self.f0_stats = torch.load(f0_stats) if f0_stats else None
+
         self.multispkr = multispkr
         if self.multispkr:
-            spkrs = [parse_speaker(f, self.multispkr) for f in self.audio_files]
-            spkrs = list(set(spkrs))
+            spkrs = list(set([parse_speaker(f, self.multispkr) for f in self.audio_files]))
             spkrs.sort()
-
             self.id_to_spkr = spkrs
             self.spkr_to_id = {k: v for v, k in enumerate(self.id_to_spkr)}
 
@@ -392,63 +382,62 @@ class F0Dataset(torch.utils.data.Dataset):
         return new_seqs
 
     def __getitem__(self, index):
+        """
+        Returns:
+            feats
+                spkr :: Optional[int] - Speaker index
+                f0 :: - Fundamental frequencies, can be normalized
+            f0 :: - Copy of feats['f0']
+            filename :: str - audio file name
+        """
         filename = self.audio_files[index]
-        if self._cache_ref_count == 0:
-            audio, sampling_rate = load_audio(filename)
-            if self.pad:
-                padding = self.pad - (audio.shape[-1] % self.pad)
-                audio = np.pad(audio, (0, padding), "constant", constant_values=0)
-            audio = audio / MAX_WAV_VALUE
-            audio = normalize(audio) * 0.95
-            self.cached_wav = audio
-            if sampling_rate != self.sampling_rate:
-                raise ValueError("{} SR doesn't match target {} SR".format(
-                    sampling_rate, self.sampling_rate))
-            self._cache_ref_count = self.n_cache_reuse
-        else:
-            audio = self.cached_wav
-            self._cache_ref_count -= 1
+
+        # Load
+        audio, sampling_rate = load_audio(filename)
+        if sampling_rate != self.sampling_rate:
+            raise ValueError(f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR")
+
+        # Volume normalization
+        audio = audio / MAX_WAV_VALUE
+        audio = normalize(audio) * 0.95
 
         while audio.shape[0] < self.segment_size:
             audio = np.hstack([audio, audio])
 
-        audio = torch.FloatTensor(audio)
-        audio = audio.unsqueeze(0)
+        # Tensor-nize
+        audio = torch.FloatTensor(audio).unsqueeze(0)
 
         assert audio.size(1) >= self.segment_size, "Padding not supported!!"
         audio = self._sample_interval([audio])[0]
 
+        # Extract features
         feats = {}
+
+        # `f0`
+        ## Estimation by yaapt
         try:
-            f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=self.f0_interp)
+            f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=False)
         except:
             f0 = np.zeros((1, 1, audio.shape[-1] // 80))
         f0 = f0.astype(np.float32)
         feats['f0'] = f0.squeeze(0)
-
-        if self.multispkr:
-            feats['spkr'] = self._get_spk_idx(index)
-
+        ## Normalization with pre-calculated statistics
         if self.f0_normalize:
+            # SD|SI mean and std
             spkr_id = self._get_spk_idx(index).item()
-
             if spkr_id not in self.f0_stats:
                 mean = self.f0_stats['f0_mean']
                 std = self.f0_stats['f0_std']
             else:
                 mean = self.f0_stats[spkr_id]['f0_mean']
                 std = self.f0_stats[spkr_id]['f0_std']
+            # Normalize non-zero components
             ii = feats['f0'] != 0
-
-            if self.f0_median:
-                med = np.median(feats['f0'][ii])
-                feats['f0'][~ii] = med
-                feats['f0'][~ii] = (feats['f0'][~ii] - mean) / std
-
             feats['f0'][ii] = (feats['f0'][ii] - mean) / std
 
-            if self.f0_feats:
-                feats['f0_stats'] = torch.FloatTensor([mean, std]).view(-1).numpy()
+        # `spkr`
+        if self.multispkr:
+            feats['spkr'] = self._get_spk_idx(index)
 
         return feats, feats['f0'], str(filename)
 

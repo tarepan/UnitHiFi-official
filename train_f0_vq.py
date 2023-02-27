@@ -68,16 +68,10 @@ def train(a, h):
 
     # Data
     train_filelist, valid_filelist = get_dataset_filelist(h)
-    trainset = F0Dataset(train_filelist, h.segment_size, h.sampling_rate, split=True,  n_cache_reuse=0, device=device,
-                            multispkr   =h.get('multispkr',       None), f0_stats =h.get('f0_stats',   None),
-                            f0_normalize=h.get('f0_normalize',   False), f0_feats =h.get('f0_feats',  False),
-                            f0_median   =h.get('f0_median',      False), f0_interp=h.get('f0_interp', False),
-                            vqvae       =h.get('code_vq_params', False),)
-    validset = F0Dataset(valid_filelist, h.segment_size, h.sampling_rate, split=False, n_cache_reuse=0, device=device,
-                            multispkr   =h.get('multispkr',       None), f0_stats =h.get('f0_stats',   None),
-                            f0_normalize=h.get('f0_normalize',   False), f0_feats =h.get('f0_feats',  False),
-                            f0_median   =h.get('f0_median',      False), f0_interp=h.get('f0_interp', False),
-                            vqvae       =h.get('code_vq_params', False))
+    trainset = F0Dataset(train_filelist, h.segment_size, h.sampling_rate, split=True,
+                         multispkr=h.get('multispkr', None), f0_stats=h.get('f0_stats', None), f0_normalize=h.get('f0_normalize', False),)
+    validset = F0Dataset(valid_filelist, h.segment_size, h.sampling_rate, split=False,
+                         multispkr=h.get('multispkr', None), f0_stats=h.get('f0_stats', None), f0_normalize=h.get('f0_normalize', False),)
     train_loader = DataLoader(trainset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
     valid_loader = DataLoader(validset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
 

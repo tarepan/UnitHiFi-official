@@ -16,9 +16,6 @@
 
     "f0_stats": "datasets/VCTK/f0_stats.th",
     "f0_normalize": true,
-    "f0_feats": false,
-    "f0_median": false,
-    "f0_interp": false,
 
     "f0_vq_params": {
         "l_bins": 20,
