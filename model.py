@@ -42,35 +42,39 @@ class Quantizer(nn.Module):
 class CodeGenerator(Generator):
     def __init__(self, h):
         super().__init__(h)
-        self.dict = nn.Embedding(h.num_embeddings, h.embedding_dim)
-        self.f0 = h.get('f0', None)
-        self.multispkr = h.get('multispkr', None)
 
-        if self.multispkr:
-            self.spkr = nn.Embedding(200, h.embedding_dim)
-
-        self.encoder = None
-        self.vq = None
-        if h.get("lambda_commit", None):
-            assert self.f0, "Requires F0 set"
-            self.encoder = Encoder(**h.f0_encoder_params)
-            self.vq = Bottleneck(**h.f0_vq_params)
-
-        self.code_encoder = None
-        self.code_vq = None
+        # Content - Learnable Encoder-VQ | Learnable Embdding
+        self.code_encoder, self.code_vq, self.dict = None, None, None
         if h.get('lambda_commit_code', None):
+            # Enc-VQ (`code_encoder`+`code_vq`)
             self.code_encoder = Encoder(**h.code_encoder_params)
             self.code_vq = Bottleneck(**h.code_vq_params)
-            self.dict = None
+        else:
+            # Emb (`dict`)
+            self.dict = nn.Embedding(h.num_embeddings, h.embedding_dim)
 
-        self.quantizer = None
+        # fo - None | Learnable Encoder-VQ | Fixed Encoder-VQ + Learnable Embedding
+        self.use_f0 = h.get('f0', None)
+        self.encoder, self.vq, self.quantizer = None, None, None
+        if h.get("lambda_commit", None):
+            # NOTE: Current configs do NOT used
+            # Enc-VQ (`encoder`+`vq`)
+            assert self.use_f0, "Requires F0 set"
+            self.encoder = Encoder(**h.f0_encoder_params)
+            self.vq = Bottleneck(**h.f0_vq_params)
         if h.get('f0_quantizer_path', None):
-            assert self.f0, "Requires F0 set"
+            # Fixed Enc-VQ + Emb (`quantizer` + `f0_dict`)
+            assert self.use_f0, "Requires F0 set"
             self.quantizer = Quantizer(AttrDict(h.f0_quantizer))
-            quantizer_state = torch.load(h.f0_quantizer_path, map_location='cpu')
-            self.quantizer.load_state_dict(quantizer_state['generator'])
+            self.quantizer.load_state_dict(torch.load(h.f0_quantizer_path, map_location='cpu')['generator'])
             self.quantizer.eval()
             self.f0_dict = nn.Embedding(h.f0_quantizer['f0_vq_params']['l_bins'], h.embedding_dim)
+
+        # Speaker - None | Embedding
+        self.use_spk = h.get('multispkr', None)
+        if self.use_spk:
+            # NOTE: `num_embeddings=200` is too much. LJSpeech needs just 1, VCTK needs 109. 
+            self.spk_emb = nn.Embedding(200, h.embedding_dim)
 
     @staticmethod
     def _upsample(signal, max_frames):
@@ -94,53 +98,82 @@ class CodeGenerator(Generator):
         return signal
 
     def forward(self, **kwargs):
-        code_commit_losses = None
-        code_metrics = None
-        if self.code_vq and kwargs['code'].dtype is torch.int64:
-            x = self.code_vq.level_blocks[0].k[kwargs['code']].transpose(1, 2)
-        elif self.code_vq:
-            code_h = self.code_encoder(kwargs['code'])
-            _, code_h_q, code_commit_losses, code_metrics = self.code_vq(code_h)
-            x = code_h_q[0]
-        else:
-            x = self.dict(kwargs['code']).transpose(1, 2)
-
-        f0_commit_losses = None
-        f0_metrics = None
-        if self.vq:
-            f0_h = self.encoder(kwargs['f0'])
-            _, f0_h_q, f0_commit_losses, f0_metrics = self.vq(f0_h)
-            kwargs['f0'] = f0_h_q[0]
-        elif self.quantizer:
-            self.quantizer.eval()
-            assert not self.quantizer.training, "VQ is in training status!!!"
-            f0_h = self.quantizer.encoder(kwargs['f0'])
-            f0_h = [x.detach() for x in f0_h]
-            zs, _, _, _ = self.quantizer.vq(f0_h)
-            zs = [x.detach() for x in zs]
-            f0_h_q = self.f0_dict(zs[0].detach()).transpose(1, 2)
-            kwargs['f0'] = f0_h_q
-
-        if self.f0:
-            if x.shape[-1] < kwargs['f0'].shape[-1]:
-                x = self._upsample(x, kwargs['f0'].shape[-1])
+        """
+        Args:
+            kwargs
+                code - 
+                f0 - 
+                spkr :: Optional[int] - speaker index (global feature)
+        Returns:
+            wave_estim - Estimated waveform
+            (code_commit_losses, f0_commit_losses) :: Optional - content/fo Commitment loss
+            (code_metrics, f0_metrics) :: Optional - content/fo Metrics
+        """
+        #### PreNet ###############################################################
+        # Content
+        code = kwargs['code']
+        code_commit_losses, code_metrics = None, None
+        if self.code_vq:
+            if code.dtype is torch.int64:
+                # VQ Query: index -> z_q
+                x = self.code_vq.level_blocks[0].k[code].transpose(1, 2)
             else:
-                kwargs['f0'] = self._upsample(kwargs['f0'], x.shape[-1])
-            x = torch.cat([x, kwargs['f0']], dim=1)
+                # Encode + VQ: feat -> z -> z_q
+                code_h = self.code_encoder(code)
+                _, code_h_q, code_commit_losses, code_metrics = self.code_vq(code_h)
+                x = code_h_q[0]
+        else:
+            # Embedding: index -> emb
+            x = self.dict(code).transpose(1, 2)
 
-        if self.multispkr:
-            spkr = self.spkr(kwargs['spkr']).transpose(1, 2)
-            spkr = self._upsample(spkr, x.shape[-1])
-            x = torch.cat([x, spkr], dim=1)
+        # [Optional] fo
+        f0_commit_losses, f0_metrics = None, None
+        if self.use_f0:
+            f0 = kwargs['f0']
+            if self.vq:
+                # Enc-VQ
+                f0_h = self.encoder(f0)
+                _, f0_h_q, f0_commit_losses, f0_metrics = self.vq(f0_h)
+                f0 = f0_h_q[0]
+            elif self.quantizer:
+                # Fixed-Enc-VQ + Emb
+                self.quantizer.eval()
+                assert not self.quantizer.training, "VQ is in training status!!!"
+                f0_h = [x.detach() for x in self.quantizer.encoder(f0)]
+                zs   = [x.detach() for x in self.quantizer.vq(f0_h)[0]]
+                f0_h_q = self.f0_dict(zs[0].detach()).transpose(1, 2)
+                f0 = f0_h_q
+            # Up↑/Concat
+            ## `x` up↑ | `f0` up↑
+            if x.shape[-1] < f0.shape[-1]:
+                x  = self._upsample(x, f0.shape[-1])
+            else:
+                f0 = self._upsample(f0, x.shape[-1])
+            ## Concat
+            x = torch.cat([x, f0], dim=1)
 
+        # [Optional] Global speaker embedding
+        if self.use_spk:
+            global_spk_emb = self.spk_emb(kwargs['spkr']).transpose(1, 2)
+            # Up↑/Concat
+            spk_emb_series = self._upsample(global_spk_emb, x.shape[-1])
+            x = torch.cat([x, spk_emb_series], dim=1)
+
+        # [Optional] Other feature
         for k, feat in kwargs.items():
             if k in ['spkr', 'code', 'f0']:
                 continue
-
+            # Up↑/Concat
             feat = self._upsample(feat, x.shape[-1])
             x = torch.cat([x, feat], dim=1)
+        #### /PreNet ##############################################################
 
+        # HiFi-GAN
+        wave_estim = super().forward(x)
+
+        # Returns
         if self.vq or self.code_vq:
-            return super().forward(x), (code_commit_losses, f0_commit_losses), (code_metrics, f0_metrics)
+            # For learnable encoders
+            return wave_estim, (code_commit_losses, f0_commit_losses), (code_metrics, f0_metrics)
         else:
-            return super().forward(x)
+            return wave_estim

@@ -204,16 +204,24 @@ class Bottleneck(nn.Module):
         return xs_quantised
 
     def forward(self, xs):
+        """
+        Returns:
+            zs :: List[] -
+            xs_quantised :: List[] -
+            commit_losses :: List[] -
+            metrics :: List[] -
+        """
         zs, xs_quantised, commit_losses, metrics = [], [], [], []
         for level in range(self.levels):
             level_block = self.level_blocks[level]
             x = xs[level]
             z, x_quantised, commit_loss, metric = level_block(x, update_k=self.training)
-            zs.append(z)
             if not self.training:
                 # Be extra paranoid and make sure the encoder weights can't
                 # change from straight-through estimator
                 x_quantised = x_quantised.detach()
+            # appends
+            zs.append(z)
             xs_quantised.append(x_quantised)
             commit_losses.append(commit_loss)
             if self.training:
