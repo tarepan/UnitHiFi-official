@@ -105,10 +105,9 @@ def train(a, h):
             start_b = time.time()
 
             x, y, _, y_mel = batch
-            y = torch.autograd.Variable(y.to(device, non_blocking=False))
-            y_mel = torch.autograd.Variable(y_mel.to(device, non_blocking=False))
-            y = y.unsqueeze(1)
-            x = {k: torch.autograd.Variable(v.to(device, non_blocking=False)) for k, v in x.items()}
+            y = y.unsqueeze(1).to(device, non_blocking=True)
+            y_mel = y_mel.to(device, non_blocking=True)
+            x = {k: v.to(device, non_blocking=True) for k, v in x.items()}
 
             y_g_hat = generator(**x)
             if h.get('f0_vq_params', None) or h.get('code_vq_params', None):

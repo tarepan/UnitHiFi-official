@@ -21,13 +21,19 @@ from torch.distributed import init_process_group
 from torch.nn.parallel import DistributedDataParallel
 from dataset import F0Dataset, get_dataset_filelist
 from model import Quantizer
-from utils import scan_checkpoint, load_checkpoint, save_checkpoint, build_env, \
-    AttrDict
+from utils import scan_checkpoint, load_checkpoint, save_checkpoint, build_env, AttrDict
 
 torch.backends.cudnn.benchmark = True
 
 
 def train(a, h):
+    """
+    Model: `Quantizer`
+    Optim: `AdamW`
+    Sched: `ExponentialLR`
+    Data:  `F0Dataset`
+    Loss:  MSE + commitment
+    """
 
     torch.cuda.manual_seed(h.seed)
     device = torch.device('cuda')
@@ -59,97 +65,96 @@ def train(a, h):
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=h.lr_decay, last_epoch=last_epoch)
 
-    training_filelist, validation_filelist = get_dataset_filelist(h)
+    # Params
+    lambda_commit = h.get('lambda_commit', None)
 
-    trainset = F0Dataset(training_filelist, h.segment_size, h.sampling_rate, n_cache_reuse=0, device=device,
-                         multispkr=h.get('multispkr', None), f0_stats=h.get('f0_stats', None),
-                         f0_normalize=h.get('f0_normalize', False), f0_feats=h.get('f0_feats', False),
-                         f0_median=h.get('f0_median', False), f0_interp=h.get('f0_interp', False),
-                         vqvae=h.get('code_vq_params', False))
+    # Data
+    train_filelist, valid_filelist = get_dataset_filelist(h)
+    trainset = F0Dataset(train_filelist, h.segment_size, h.sampling_rate, split=True,  n_cache_reuse=0, device=device,
+                            multispkr   =h.get('multispkr',       None), f0_stats =h.get('f0_stats',   None),
+                            f0_normalize=h.get('f0_normalize',   False), f0_feats =h.get('f0_feats',  False),
+                            f0_median   =h.get('f0_median',      False), f0_interp=h.get('f0_interp', False),
+                            vqvae       =h.get('code_vq_params', False),)
+    validset = F0Dataset(valid_filelist, h.segment_size, h.sampling_rate, split=False, n_cache_reuse=0, device=device,
+                            multispkr   =h.get('multispkr',       None), f0_stats =h.get('f0_stats',   None),
+                            f0_normalize=h.get('f0_normalize',   False), f0_feats =h.get('f0_feats',  False),
+                            f0_median   =h.get('f0_median',      False), f0_interp=h.get('f0_interp', False),
+                            vqvae       =h.get('code_vq_params', False))
     train_loader = DataLoader(trainset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
+    valid_loader = DataLoader(validset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
 
-    validset = F0Dataset(validation_filelist, h.segment_size, h.sampling_rate, False, n_cache_reuse=0,
-                            device=device, multispkr=h.get('multispkr', None), f0_stats=h.get('f0_stats', None),
-                            f0_normalize=h.get('f0_normalize', False), f0_feats=h.get('f0_feats', False),
-                            f0_median=h.get('f0_median', False), f0_interp=h.get('f0_interp', False),
-                            vqvae=h.get('code_vq_params', False))
-    validation_loader = DataLoader(validset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
-
+    # Logger
     sw = SummaryWriter(os.path.join(a.checkpoint_path, 'logs'))
 
     generator.train()
     for epoch in range(max(0, last_epoch), a.training_epochs):
+        #### Epoch ###################################################################################
         start = time.time()
         print(f"Epoch: {epoch + 1}")
 
         for i, batch in enumerate(train_loader):
+            #### Step ############################################################################
             start_b = time.time()
-
-            x, y, _ = batch
-            y = torch.autograd.Variable(y.to(device, non_blocking=False))
-            x = {k: torch.autograd.Variable(v.to(device, non_blocking=False)) for k, v in x.items()}
-
-            y_g_hat, commit_loss, metrics = generator(**x)
-            f0_commit_loss = commit_loss[0]
-            f0_metrics = metrics[0]
-
-            # Generator
             optim_g.zero_grad()
 
-            # L2 Reconstruction Loss
-            loss_recon = F.mse_loss(y_g_hat, y)
-            loss_recon += f0_commit_loss * h.get('lambda_commit', None)
+            # Items
+            x, y, _ = batch
+            y = y.to(device, non_blocking=True)
+            x = {k: v.to(device, non_blocking=True) for k, v in x.items()}
 
-            loss_recon.backward()
+            # Forward/Loss/Backward/Optim
+            y_g_hat, commit_loss, metrics = generator(**x)
+            loss_total = F.mse_loss(y_g_hat, y) + lambda_commit * commit_loss[0]
+            loss_total.backward()
             optim_g.step()
 
-            # STDOUT logging
+            # Validation & Logging
+            ## STDOUT logging
             if steps % a.stdout_interval == 0:
-                print('Steps : {:d}, Gen Loss Total : {:4.3f}, s/b : {:4.3f}'.format(steps, loss_recon, time.time() - start_b))
-
-            # checkpointing
+                print('Steps : {:d}, Gen Loss Total : {:4.3f}, s/b : {:4.3f}'.format(steps, loss_total, time.time() - start_b))
+            ## checkpointing
             if steps % a.checkpoint_interval == 0 and steps != 0:
                 checkpoint_path = "{}/g_{:08d}".format(a.checkpoint_path, steps)
-                save_checkpoint(checkpoint_path, {
-                    'generator': generator.state_dict(), 'optim_g': optim_g.state_dict(), 'steps': steps, 'epoch': epoch
-                })
-
-            # Tensorboard summary logging
+                save_checkpoint(checkpoint_path, {'generator': generator.state_dict(), 'optim_g': optim_g.state_dict(), 'steps': steps, 'epoch': epoch})
+            ## Tensorboard summary logging
             if steps % a.summary_interval == 0:
-                sw.add_scalar("training/gen_loss_total", loss_recon, steps)
-                sw.add_scalar("training/commit_error", f0_commit_loss, steps)
+                f0_commit_loss = commit_loss[0]
+                f0_metrics = metrics[0]
+                sw.add_scalar("training/gen_loss_total", loss_total,                steps)
+                sw.add_scalar("training/commit_error", f0_commit_loss,              steps)
                 sw.add_scalar("training/used_curr", f0_metrics['used_curr'].item(), steps)
-                sw.add_scalar("training/entropy", f0_metrics['entropy'].item(), steps)
-                sw.add_scalar("training/usage", f0_metrics['usage'].item(), steps)
-
-            # Validation
-            if steps % a.validation_interval == 0:  # and steps != 0:
+                sw.add_scalar("training/entropy",   f0_metrics['entropy'].item(),   steps)
+                sw.add_scalar("training/usage",     f0_metrics['usage'].item(),     steps)
+            ## Validation
+            if steps % a.validation_interval == 0:
                 generator.eval()
                 torch.cuda.empty_cache()
                 val_err_tot = 0
                 with torch.no_grad():
-                    for j, batch in enumerate(validation_loader):
+                    for j, batch in enumerate(valid_loader):
+                        # Items
                         x, y, _ = batch
-                        x = {k: v.to(device, non_blocking=False) for k, v in x.items()}
-                        y = torch.autograd.Variable(y.to(device, non_blocking=False))
-
+                        x = {k: v.to(device) for k, v in x.items()}
+                        y = y.to(device)
+                        # Forward/Loss
                         y_g_hat, commit_loss, _ = generator(**x)
                         f0_commit_loss = commit_loss[0]
-                        val_err_tot += f0_commit_loss * h.get('lambda_commit', None)
-                        val_err_tot += F.mse_loss(y_g_hat, y).item()
-
+                        val_err_tot += (F.mse_loss(y_g_hat, y).item() + lambda_commit * f0_commit_loss)
                     val_err = val_err_tot / (j + 1)
-                    sw.add_scalar("validation/mel_spec_error", val_err, steps)
+                    sw.add_scalar("validation/mel_spec_error", val_err,      steps)
                     sw.add_scalar("validation/commit_error", f0_commit_loss, steps)
                 generator.train()
+            # /Validation & Logging
 
             steps += 1
             if steps >= a.training_steps:
                 break
+            #### /Step ###########################################################################
 
         scheduler_g.step()
 
         print(f'Time taken for epoch {epoch + 1} is {int(time.time() - start)} sec\n')
+        #### /Epoch ##################################################################################
 
     print('Finished training')
 
