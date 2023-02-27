@@ -89,7 +89,7 @@ First, you will need to download [LibriLight](https://github.com/facebookresearc
 
 Next, train a vqvae model using the following command:
 ```bash
-python -m torch.distributed.launch --nproc_per_node <NUM_GPUS> train.py \
+python train.py \
 --checkpoint_path checkpoints/ll_vq \
 --config configs/LibriLight/vqvae256.json
 ```
@@ -132,15 +132,14 @@ python parse_hubert_codes.py \
 train F0 quantizer model (Encoder<sub>f<sub>o</sub></sub>)  
 
 ```bash
-python -m torch.distributed.launch --nproc_per_node 8 train_f0_vq.py \
+python train_f0_vq.py \
 --checkpoint_path checkpoints/lj_f0_vq \
 --config configs/LJSpeech/f0_vqvae.json
 ```
-Set ```<NUM_GPUS>``` to the number of availalbe GPUs on your machine.
 
 ### Decoder Training
 ```bash
-python -m torch.distributed.launch --nproc_per_node <NUM_GPUS> train.py \
+python train.py \
 --checkpoint_path checkpoints/lj_vqvae \
 --config configs/LJSpeech/vqvae256_lut.json
 ```
