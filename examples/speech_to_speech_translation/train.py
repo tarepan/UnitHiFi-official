@@ -267,19 +267,15 @@ def main():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--group_name', default=None)
     parser.add_argument('--checkpoint_path', default='cp_hifigan')
     parser.add_argument('--config', default='')
     parser.add_argument('--training_epochs', default=2000, type=int)
     parser.add_argument('--training_steps', default=500000, type=int)
-    parser.add_argument('--stdout_interval', default=5, type=int)
+    # Validation & Logging
+    parser.add_argument('--stdout_interval',     default=    5, type=int)
     parser.add_argument('--checkpoint_interval', default=50000, type=int)
-    parser.add_argument('--summary_interval', default=100, type=int)
-    parser.add_argument('--validation_interval', default=5000, type=int)
-    parser.add_argument('--fine_tuning', default=False, type=bool)
-    parser.add_argument('--local_rank', default=0, type=int)
-    parser.add_argument('--distributed-world-size', type=int)
-    parser.add_argument('--distributed-port', type=int)
+    parser.add_argument('--summary_interval',    default=  100, type=int)
+    parser.add_argument('--validation_interval', default= 5000, type=int)
 
     a = parser.parse_args()
 
