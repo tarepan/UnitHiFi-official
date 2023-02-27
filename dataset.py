@@ -23,6 +23,12 @@ MAX_WAV_VALUE = 32768.0
 
 
 def get_yaapt_f0(audio, rate=16000, interp=False):
+    """
+    Args:
+        audio :: (1, T) - Waveform
+    Returns:
+        f0 :: (1, 1, Frame) - fo series
+    """
     frame_length = 20.0
     to_pad = int(frame_length / 1000 * rate) // 2
 
@@ -68,6 +74,7 @@ def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin,
 
 
 def load_audio(full_path):
+    # TODO: Audio channel handling
     data, sampling_rate = sf.read(full_path, dtype='int16')
     return data, sampling_rate
 
@@ -338,108 +345,63 @@ class CodeDataset(torch.utils.data.Dataset):
 
 
 class F0Dataset(torch.utils.data.Dataset):
-    def __init__(self, training_files, segment_size, sampling_rate, split=True, multispkr=False, f0_stats=None, f0_normalize=False):
+    def __init__(self, training_files, segment_size, sampling_rate, multispkr, f0_normalize, f0_stats):
         """
         Args:
-            f0_stats :: str - Path to the fo statistics file
-            f0_normalize :: bool - Whether to normalize the fo
+            training_files :: str  -
+            segment_size   :: int  - Clipping length
+            sampling_rate  :: int  - Configured waveform sampling rate
+            multispkr      :: str  - How to access speaker name
+            f0_normalize   :: bool - Whether to normalize the fo
+            f0_stats       :: str  - Path to the fo statistics file
         """
-        self.audio_files, _ = training_files
         random.seed(1234)
-        self.segment_size = segment_size
-        self.sampling_rate = sampling_rate
-        self.split = split
-        self.f0_normalize = f0_normalize
-        self.f0_stats = torch.load(f0_stats) if f0_stats else None
+        self.segment_size, self.sampling_rate, self.multispkr, self.f0_normalize = segment_size, sampling_rate, multispkr, f0_normalize
+        self.audio_files, _ = training_files
+        self.f0_stats = torch.load(f0_stats)
+        # spk_idx accessor
+        spkrs = list(set([parse_speaker(f, self.multispkr) for f in self.audio_files]))
+        spkrs.sort()
+        self.spkr_to_id = {spk_name: index for index, spk_name in enumerate(spkrs)}
 
-        self.multispkr = multispkr
-        if self.multispkr:
-            spkrs = list(set([parse_speaker(f, self.multispkr) for f in self.audio_files]))
-            spkrs.sort()
-            self.id_to_spkr = spkrs
-            self.spkr_to_id = {k: v for v, k in enumerate(self.id_to_spkr)}
-
-    def _sample_interval(self, seqs, seq_len=None):
-        N = max([v.shape[-1] for v in seqs])
-        if seq_len is None:
-            seq_len = self.segment_size if self.segment_size > 0 else N
-
-        hops = [N // v.shape[-1] for v in seqs]
-        lcm = np.lcm.reduce(hops)
-
-        # Randomly pickup with the batch_max_steps length of the part
-        interval_start = 0
-        interval_end = N // lcm - seq_len // lcm
-
-        start_step = random.randint(interval_start, interval_end)
-
-        new_seqs = []
-        for i, v in enumerate(seqs):
-            start = start_step * (lcm // hops[i])
-            end = (start_step + seq_len // lcm) * (lcm // hops[i])
-            new_seqs += [v[..., start:end]]
-
-        return new_seqs
-
-    def __getitem__(self, index):
+    def __getitem__(self, uttr_idx):
         """
+        Args:
+            uttr_idx - Utterance index
         Returns:
-            feats
-                spkr :: Optional[int] - Speaker index
-                f0 :: - Fundamental frequencies, can be normalized
-            f0 :: - Copy of feats['f0']
-            filename :: str - audio file name
+            f0 :: NDArray[(1, Frame)] - Fundamental frequencies, can be normalized
         """
-        filename = self.audio_files[index]
-
-        # Load
-        audio, sampling_rate = load_audio(filename)
-        if sampling_rate != self.sampling_rate:
-            raise ValueError(f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR")
-
-        # Volume normalization
-        audio = audio / MAX_WAV_VALUE
-        audio = normalize(audio) * 0.95
-
+        # Waveform preprocessing
+        ## Load :: (T,)
+        audio, sampling_rate = load_audio(self.audio_files[uttr_idx])
+        assert sampling_rate == self.sampling_rate, f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR"
+        ## Volume normalization
+        audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
+        ## Clipping :: (T,) -> (1, T) -> (1, T=segment) - T=segment, if shorter than segment, first repeat
         while audio.shape[0] < self.segment_size:
             audio = np.hstack([audio, audio])
-
-        # Tensor-nize
         audio = torch.FloatTensor(audio).unsqueeze(0)
+        clip_start = random.randint(0, audio.shape[-1] - self.segment_size)
+        audio = audio[..., clip_start : clip_start + self.segment_size]
 
-        assert audio.size(1) >= self.segment_size, "Padding not supported!!"
-        audio = self._sample_interval([audio])[0]
-
-        # Extract features
-        feats = {}
-
-        # `f0`
-        ## Estimation by yaapt
+        # fo generation
+        ## Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
         try:
-            f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=False)
+            f0 = get_yaapt_f0(audio.numpy(), rate=sampling_rate, interp=False)
         except:
             f0 = np.zeros((1, 1, audio.shape[-1] // 80))
-        f0 = f0.astype(np.float32)
-        feats['f0'] = f0.squeeze(0)
+        f0 = f0.astype(np.float32).squeeze(0)
         ## Normalization with pre-calculated statistics
         if self.f0_normalize:
-            # SD|SI mean and std
-            spkr_id = self._get_spk_idx(index).item()
-            if spkr_id not in self.f0_stats:
-                mean = self.f0_stats['f0_mean']
-                std = self.f0_stats['f0_std']
-            else:
-                mean = self.f0_stats[spkr_id]['f0_mean']
-                std = self.f0_stats[spkr_id]['f0_std']
+            spkr_id = self._get_spk_idx(uttr_idx).item()
+            spk_is_not_in_stats = spkr_id not in self.f0_stats
+            mean = self.f0_stats['f0_mean'] if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_mean']
+            std  = self.f0_stats['f0_std']  if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_std']
             # Normalize non-zero components
-            ii = feats['f0'] != 0
-            feats['f0'][ii] = (feats['f0'][ii] - mean) / std
+            ii = f0 != 0
+            f0[ii] = (f0[ii] - mean) / std
 
-        # `spkr`
-        if self.multispkr:
-            feats['spkr'] = self._get_spk_idx(index)
-
-        return feats, feats['f0'], str(filename)
+        return f0
 
     def _get_spk_idx(self, idx):
         spkr_name = parse_speaker(self.audio_files[idx], self.multispkr)

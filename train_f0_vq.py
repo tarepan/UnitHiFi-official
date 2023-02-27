@@ -68,10 +68,8 @@ def train(a, h):
 
     # Data
     train_filelist, valid_filelist = get_dataset_filelist(h)
-    trainset = F0Dataset(train_filelist, h.segment_size, h.sampling_rate, split=True,
-                         multispkr=h.get('multispkr', None), f0_stats=h.get('f0_stats', None), f0_normalize=h.get('f0_normalize', False),)
-    validset = F0Dataset(valid_filelist, h.segment_size, h.sampling_rate, split=False,
-                         multispkr=h.get('multispkr', None), f0_stats=h.get('f0_stats', None), f0_normalize=h.get('f0_normalize', False),)
+    trainset = F0Dataset(train_filelist, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
+    validset = F0Dataset(valid_filelist, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
     train_loader = DataLoader(trainset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
     valid_loader = DataLoader(validset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
 
@@ -89,10 +87,9 @@ def train(a, h):
             start_b = time.time()
             optim_g.zero_grad()
 
-            # Items
-            x, y, _ = batch
-            y = y.to(device, non_blocking=True)
-            x = {k: v.to(device, non_blocking=True) for k, v in x.items()}
+            fo = batch
+            fo = fo.to(device, non_blocking=True)
+            x, y = {'f0': fo}, fo
 
             # Forward/Loss/Backward/Optim
             y_g_hat, commit_losses, metrics = generator(**x)
@@ -125,9 +122,9 @@ def train(a, h):
                 with torch.no_grad():
                     for j, batch in enumerate(valid_loader):
                         # Items
-                        x, y, _ = batch
-                        x = {k: v.to(device) for k, v in x.items()}
-                        y = y.to(device)
+                        fo = batch
+                        fo = fo.to(device, non_blocking=True)
+                        x, y = {'f0': fo}, fo
                         # Forward/Loss
                         y_g_hat, commit_losses, _ = generator(**x)
                         commit_loss = commit_losses[0]
