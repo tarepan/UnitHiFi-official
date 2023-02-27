@@ -57,36 +57,94 @@ Requirements:
    ```
 
 ## Training
-
-#### F0 Quantizer Model
-To train F0 quantizer model, use the following command:
-   ```bash
-   python -m torch.distributed.launch --nproc_per_node 8 train_f0_vq.py \
-   --checkpoint_path checkpoints/lj_f0_vq \
-   --config configs/LJSpeech/f0_vqvae.json
-   ```
-Set ```<NUM_GPUS>``` to the number of availalbe GPUs on your machine.
-
-#### Resynthesis Model
-To train a resynthesis model, use the following command:
-   ```bash
-   python -m torch.distributed.launch --nproc_per_node <NUM_GPUS> train.py \
-   --checkpoint_path checkpoints/lj_vqvae \
-   --config configs/LJSpeech/vqvae256_lut.json
-   ```
-
-#### Supported Configurations
 Currently, we support the following training schemes:
 
-|Dataset|SSL Method|Dictionary Size|Config Path|
-|------|---|---|---|
-|LJSpeech|HuBERT|100|```configs/LJSpeech/hubert100_lut.json```|
-|LJSpeech|CPC|100|```configs/LJSpeech/cpc100_lut.json```|
-|LJSpeech|VQVAE|256|```configs/LJSpeech/vqvae256_lut.json```|
-|VCTK|HuBERT|100|```configs/VCTK/hubert100_lut.json```|
-|VCTK|CPC|100|```configs/VCTK/cpc100_lut.json```|
-|VCTK|VQVAE|256|```configs/VCTK/vqvae256_lut.json```|
+| Dataset  | Encoder<sub>c</sub> SSL | Dictionary Size | Config Path                               |
+| -------- |------------------------ | --------------- | ------------------------------------------|
+| LJSpeech | HuBERT                  | 100             | ```configs/LJSpeech/hubert100_lut.json``` |
+| LJSpeech | CPC                     | 100             | ```configs/LJSpeech/cpc100_lut.json```    |
+| LJSpeech | VQVAE                   | 256             | ```configs/LJSpeech/vqvae256_lut.json```  |
+| VCTK     | HuBERT                  | 100             | ```configs/VCTK/hubert100_lut.json```     |
+| VCTK     | CPC                     | 100             | ```configs/VCTK/cpc100_lut.json```        |
+| VCTK     | VQVAE                   | 256             | ```configs/VCTK/vqvae256_lut.json```      |
 
+For all config, you needs following steps:
+
+- Encoder<sub>f<sub>o</sub></sub> training
+- Decoder training
+
+If use CPC | HuBERT, you needs following steps before common steps:
+
+- Content encoding w/ pretrained model
+
+If use VQVAE, you needs following steps before common steps:
+
+- Encoder<sub>c</sub> (VQVAE) training
+- Content encoding w/ trained model
+
+### VQVAE Training & Content Encoding
+(only for VQVAE Encoder<sub>c</sub>)  
+
+First, you will need to download [LibriLight](https://github.com/facebookresearch/libri-light) dataset and move it to ```data/LibriLight```.
+
+Next, train a vqvae model using the following command:
+```bash
+python -m torch.distributed.launch --nproc_per_node <NUM_GPUS> train.py \
+--checkpoint_path checkpoints/ll_vq \
+--config configs/LibriLight/vqvae256.json
+```
+
+To extract codes:
+```bash
+python infer_vqvae_codes.py \
+--input_dir folder_with_wavs_to_code \
+--output_dir vqvae_output_folder \
+--checkpoint_file checkpoints/ll_vq
+```
+
+To parse output:
+```bash
+ python parse_vqvae_codes.py \
+ --manifest vqvae_output_file \
+ --outdir parsed_vqvae
+```
+
+### CPC / HuBERT Content Encoding
+To quantize new datasets with CPC or HuBERT follow the instructions described in the [GSLM code](https://github.com/pytorch/fairseq/tree/master/examples/textless_nlp/gslm).
+
+To parse CPC output:
+```bash
+python scripts/parse_cpc_codes.py \
+--manifest cpc_output_file \
+--wav-root wav_root_dir \
+--outdir parsed_cpc
+```
+
+To parse HuBERT output:
+```bash
+python parse_hubert_codes.py \
+--codes hubert_output_file \
+--manifest hubert_tsv_file \
+--outdir parsed_hubert 
+```
+
+### Encoder<sub>f<sub>o</sub></sub> Training
+train F0 quantizer model (Encoder<sub>f<sub>o</sub></sub>)  
+
+```bash
+python -m torch.distributed.launch --nproc_per_node 8 train_f0_vq.py \
+--checkpoint_path checkpoints/lj_f0_vq \
+--config configs/LJSpeech/f0_vqvae.json
+```
+Set ```<NUM_GPUS>``` to the number of availalbe GPUs on your machine.
+
+### Decoder Training
+```bash
+python -m torch.distributed.launch --nproc_per_node <NUM_GPUS> train.py \
+--checkpoint_path checkpoints/lj_vqvae \
+--config configs/LJSpeech/vqvae256_lut.json
+```
+ 
 ## Inference
 To generate, simply run:
 ```bash
@@ -115,56 +173,6 @@ python inference.py \
 --output_dir generations_vctk_to_lj
 ```
 
-## Preprocessing New Datasets
-
-#### CPC / HuBERT Coding
-To quantize new datasets with CPC or HuBERT follow the instructions described in the [GSLM code](https://github.com/pytorch/fairseq/tree/master/examples/textless_nlp/gslm).
-
-To parse CPC output:
-```bash
-python scripts/parse_cpc_codes.py \
---manifest cpc_output_file \
---wav-root wav_root_dir \
---outdir parsed_cpc
-```
-
-To parse HuBERT output:
-```bash
-python parse_hubert_codes.py \
---codes hubert_output_file \
---manifest hubert_tsv_file \
---outdir parsed_hubert 
-```
-
-#### VQVAE Coding
-First, you will need to download [LibriLight](https://github.com/facebookresearch/libri-light) dataset and move it to ```data/LibriLight```.
-
-For VQVAE, train a vqvae model using the following command:
-```bash
-python -m torch.distributed.launch --nproc_per_node <NUM_GPUS> train.py \
---checkpoint_path checkpoints/ll_vq \
---config configs/LibriLight/vqvae256.json
-```
-
-To extract VQVAE codes:
-```bash
-python infer_vqvae_codes.py \
---input_dir folder_with_wavs_to_code \
---output_dir vqvae_output_folder \
---checkpoint_file checkpoints/ll_vq
-```
-
-To parse VQVAE output:
-```bash
- python parse_vqvae_codes.py \
- --manifest vqvae_output_file \
- --outdir parsed_vqvae
-```
-
-## License
-
-You may find out more about the license [here](https://github.com/facebookresearch/speech-resynthesis/blob/main/LICENSE).
-
 ## Citation
 ```
 @inproceedings{polyak21_interspeech,
@@ -178,4 +186,7 @@ You may find out more about the license [here](https://github.com/facebookresear
 ``` 
 
 ## Acknowledgements
-This implementation uses code from the following repos: [HiFi-GAN](https://github.com/jik876/hifi-gan) and [Jukebox](https://github.com/openai/jukebox), as described in our code.
+This implementation uses code from the following repos:  
+
+- [HiFi-GAN](https://github.com/jik876/hifi-gan)
+- [Jukebox](https://github.com/openai/jukebox)
