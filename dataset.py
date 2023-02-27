@@ -134,7 +134,15 @@ def get_dataset_filelist(h):
     return (training_files, training_codes), (validation_files, validation_codes)
 
 
-def parse_speaker(path, method):
+def parse_speaker(path, method) -> str:
+    """Parse file path as speaker name.
+
+    Args:
+        path
+        method - MethodIdentifier or function for speaker name extraction
+    Returns:
+        - Speaker name
+    """
     if type(path) == str:
         path = Path(path)
 
@@ -158,6 +166,10 @@ class CodeDataset(torch.utils.data.Dataset):
                  device=None, fmax_loss=None, f0=None, multispkr=False, pad=None,
                  f0_stats=None, f0_normalize=False, f0_feats=False, f0_median=False,
                  f0_interp=False, vqvae=False):
+        """
+        Args:
+            multispkr - 'Not use speaker' if False else 'How to access speaker name'
+        """
         self.audio_files, self.codes = training_files
         random.seed(1234)
         self.segment_size = segment_size
@@ -184,15 +196,16 @@ class CodeDataset(torch.utils.data.Dataset):
         self.f0_median = f0_median
         if f0_stats:
             self.f0_stats = torch.load(f0_stats)
-        self.multispkr = multispkr
         self.pad = pad
+        self.multispkr = multispkr
         if self.multispkr:
-            spkrs = [parse_speaker(f, self.multispkr) for f in self.audio_files]
-            spkrs = list(set(spkrs))
-            spkrs.sort()
-
-            self.id_to_spkr = spkrs
-            self.spkr_to_id = {k: v for v, k in enumerate(self.id_to_spkr)}
+            # List of (Non-overlap) speaker names in the dataset
+            spk_names = list(set([parse_speaker(f, self.multispkr) for f in self.audio_files]))
+            spk_names.sort()
+            # how to use: `spk_name = self.id_to_spkr[spk_idx]`
+            self.id_to_spkr = spk_names
+            # how to use: `spk_idx = self.spkr_to_id[spk_name]`
+            self.spkr_to_id = {spk_name: spk_idx for spk_idx, spk_name in enumerate(self.id_to_spkr)}
 
     def _sample_interval(self, seqs, seq_len=None):
         N = max([v.shape[-1] for v in seqs])
@@ -217,6 +230,11 @@ class CodeDataset(torch.utils.data.Dataset):
         return new_seqs
 
     def __getitem__(self, index):
+        """
+        Returns:
+            feats
+                spkr :: Optional[int] - Speaker index, exist only if `multispkr` is defined
+        """
         filename = self.audio_files[index]
         if self._cache_ref_count == 0:
             audio, sampling_rate = load_audio(filename)
@@ -280,10 +298,10 @@ class CodeDataset(torch.utils.data.Dataset):
             feats['f0'] = f0.squeeze(0)
 
         if self.multispkr:
-            feats['spkr'] = self._get_spkr(index)
+            feats['spkr'] = self._get_spk_idx(index)
 
         if self.f0_normalize:
-            spkr_id = self._get_spkr(index).item()
+            spkr_id = self._get_spk_idx(index).item()
 
             if spkr_id not in self.f0_stats:
                 mean = self.f0_stats['f0_mean']
@@ -305,10 +323,15 @@ class CodeDataset(torch.utils.data.Dataset):
 
         return feats, audio.squeeze(0), str(filename), mel_loss.squeeze()
 
-    def _get_spkr(self, idx):
-        spkr_name = parse_speaker(self.audio_files[idx], self.multispkr)
-        spkr_id = torch.LongTensor([self.spkr_to_id[spkr_name]]).view(1).numpy()
-        return spkr_id
+    def _get_spk_idx(self, uttr_idx):
+        """Get speaker index from utterance index.
+
+        Returns:
+            spk_idx :: NDArray[int64] - Speaker index
+        """
+        spkr_name = parse_speaker(self.audio_files[uttr_idx], self.multispkr)
+        spk_idx = torch.LongTensor([self.spkr_to_id[spkr_name]]).view(1).numpy()
+        return spk_idx
 
     def __len__(self):
         return len(self.audio_files)
@@ -404,10 +427,10 @@ class F0Dataset(torch.utils.data.Dataset):
         feats['f0'] = f0.squeeze(0)
 
         if self.multispkr:
-            feats['spkr'] = self._get_spkr(index)
+            feats['spkr'] = self._get_spk_idx(index)
 
         if self.f0_normalize:
-            spkr_id = self._get_spkr(index).item()
+            spkr_id = self._get_spk_idx(index).item()
 
             if spkr_id not in self.f0_stats:
                 mean = self.f0_stats['f0_mean']
@@ -429,7 +452,7 @@ class F0Dataset(torch.utils.data.Dataset):
 
         return feats, feats['f0'], str(filename)
 
-    def _get_spkr(self, idx):
+    def _get_spk_idx(self, idx):
         spkr_name = parse_speaker(self.audio_files[idx], self.multispkr)
         spkr_id = torch.LongTensor([self.spkr_to_id[spkr_name]]).view(1).numpy()
         return spkr_id
