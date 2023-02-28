@@ -1,5 +1,5 @@
 {
-    "input_training_file": "datasets/VCTK/cpc100/wav_wave/train.txt",
+    "input_training_file":   "datasets/VCTK/cpc100/wav_wave/train.txt",
     "input_validation_file": "datasets/VCTK/cpc100/wav_wave/val.txt",
 
     "resblock": "1",
@@ -71,7 +71,7 @@
     "fmax": 8000,
     "fmax_for_loss": null,
 
-    "num_workers": 4,
+    "num_workers": 1,
 
     "dist_config": {
         "dist_backend": "nccl",

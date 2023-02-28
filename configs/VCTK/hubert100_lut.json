@@ -71,7 +71,7 @@
     "fmax": 8000,
     "fmax_for_loss": null,
 
-    "num_workers": 4,
+    "num_workers": 1,
 
     "dist_config": {
         "dist_backend": "nccl",
