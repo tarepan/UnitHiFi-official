@@ -206,7 +206,7 @@ class CodeDataset(torch.utils.data.Dataset):
         """
         Returns:
             feats
-                code
+                code - Content code | waveform
                 f0 :: Optional[] - Fundamental frequency series, can be normalized
                 spkr :: Optional[int] - Speaker index, exist only if `multispkr` is defined
             audio - The waveform
@@ -224,7 +224,7 @@ class CodeDataset(torch.utils.data.Dataset):
             audio = resampy.resample(audio, sampling_rate, self.sampling_rate)
         ## Normalization
         audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
-        ## Trim audio ending
+        ## Length matching - Align with hop size, and match length of audio and code
         if self.vqvae:
             code_length = audio.shape[0] // self.code_hop_size
         else:

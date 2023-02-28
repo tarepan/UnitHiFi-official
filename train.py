@@ -31,6 +31,15 @@ torch.backends.cudnn.benchmark = True
 
 
 def train(a, h):
+    """Train CodeGenerator with adversarial MPD/MSD, feature matching loss, and L1 mel-STFT loss.
+    
+    In special cases, VQ commitment losses are also added.
+
+    You can use this trainer for:
+      - Separated Decoder training     (generator == multi-feature HiFi_Generator)
+      - Enc-VQ-Dec joint training      (generator == multi Conv_Encoder + HiFi_Generator)
+      - VQVAE Encoder_content training (generator == waveform Conv_Encoder + HiFi_Generator, (VQVAE-GAN))
+    """
 
     torch.cuda.manual_seed(h.seed)
     device = torch.device('cuda')
@@ -78,18 +87,14 @@ def train(a, h):
 
     training_filelist, validation_filelist = get_dataset_filelist(h)
 
-    trainset = CodeDataset(training_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
-                           h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
-                           f0=h.get('f0', None), multispkr=h.get('multispkr', None),
-                           f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False))
-
+    trainset = CodeDataset(training_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
+                            multispkr=h.get('multispkr', None), vqvae=h.get('code_vq_params', False),
+                            f0=h.get('f0', None), f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
+    validset = CodeDataset(validation_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
+                            multispkr=h.get('multispkr', None), vqvae=h.get('code_vq_params', False),
+                            f0=h.get('f0', None), f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
     train_loader = DataLoader(trainset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
-
-    validset = CodeDataset(validation_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
-                            h.win_size, h.sampling_rate, h.fmin,
-                            fmax_loss=h.fmax_for_loss, f0=h.get('f0', None), multispkr=h.get('multispkr', None),
-                            f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False))
-    validation_loader = DataLoader(validset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
+    valid_loader = DataLoader(validset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
 
     sw = SummaryWriter(os.path.join(a.checkpoint_path, 'logs'))
 
@@ -103,67 +108,63 @@ def train(a, h):
         for i, batch in enumerate(train_loader):
             start_b = time.time()
 
-            x, y, _, y_mel = batch
-            y = y.unsqueeze(1).to(device, non_blocking=True)
-            y_mel = y_mel.to(device, non_blocking=True)
-            x = {k: v.to(device, non_blocking=True) for k, v in x.items()}
+            source, out_gt, _, out_mel_gt = batch
+            out_gt = out_gt.unsqueeze(1).to(device, non_blocking=True)
+            out_mel_gt = out_mel_gt.to(device, non_blocking=True)
+            source = {k: v.to(device, non_blocking=True) for k, v in source.items()}
 
-            y_g_hat = generator(**x)
-
+            # Forward
+            out_estim = generator(**source)
             # Losses from Learnable VQ (primarily for VQVAE_fo)
             if learn_content_vq or learn_f0_vq:
-                y_g_hat, content_fo_commit_losses, content_fo_metrics = y_g_hat
+                out_estim, content_fo_commit_losses, content_fo_metrics = out_estim
                 if learn_content_vq:
                     code_commit_loss = content_fo_commit_losses[0][0]
                     code_metrics     =       content_fo_metrics[0][0]
                 if learn_f0_vq:
                     f0_commit_loss   = content_fo_commit_losses[1][0]
                     f0_metrics       =       content_fo_metrics[1][0]
+            assert out_estim.shape == out_gt.shape, f"Mismatch in vocoder output shape - {out_estim.shape} != {out_gt.shape}"
+            # STFT loss
+            out_mel_estim = mel_spectrogram(out_estim.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax_for_loss)
 
-            assert y_g_hat.shape == y.shape, f"Mismatch in vocoder output shape - {y_g_hat.shape} != {y.shape}"
-
-            y_g_hat_mel = mel_spectrogram(y_g_hat.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax_for_loss)
-
+            # Discriminator
             optim_d.zero_grad()
-
-            # MPD
-            y_df_hat_r, y_df_hat_g, _, _ = mpd(y, y_g_hat.detach())
-            loss_disc_f, losses_disc_f_r, losses_disc_f_g = discriminator_loss(y_df_hat_r, y_df_hat_g)
-
-            # MSD
-            y_ds_hat_r, y_ds_hat_g, _, _ = msd(y, y_g_hat.detach())
-            loss_disc_s, losses_disc_s_r, losses_disc_s_g = discriminator_loss(y_ds_hat_r, y_ds_hat_g)
-
-            loss_disc_all = loss_disc_s + loss_disc_f
-
-            loss_disc_all.backward()
+            ## Forward
+            y_df_hat_r, y_df_hat_g, _, _ = mpd(out_gt, out_estim.detach())
+            y_ds_hat_r, y_ds_hat_g, _, _ = msd(out_gt, out_estim.detach())
+            ## Loss
+            loss_disc_f, _, _ = discriminator_loss(y_df_hat_r, y_df_hat_g)
+            loss_disc_s, _, _ = discriminator_loss(y_ds_hat_r, y_ds_hat_g)
+            loss_disc_total = loss_disc_f + loss_disc_s
+            ## Backward/Optim
+            loss_disc_total.backward()
             optim_d.step()
 
             # Generator
             optim_g.zero_grad()
-
-            # L1 Mel-Spectrogram Loss
-            loss_mel = F.l1_loss(y_mel, y_g_hat_mel) * 45
-
-            y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(y, y_g_hat)
-            y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(y, y_g_hat)
+            ## Forward
+            _, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(out_gt, out_estim)
+            _, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(out_gt, out_estim)
+            ## Loss
+            loss_gen_f, _ = generator_loss(y_df_hat_g)
+            loss_gen_s, _ = generator_loss(y_ds_hat_g)
             loss_fm_f = feature_loss(fmap_f_r, fmap_f_g)
             loss_fm_s = feature_loss(fmap_s_r, fmap_s_g)
-            loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
-            loss_gen_s, losses_gen_s = generator_loss(y_ds_hat_g)
-            loss_gen_all = loss_gen_s + loss_gen_f + loss_fm_s + loss_fm_f + loss_mel
+            loss_mel = F.l1_loss(out_mel_gt, out_mel_estim) * 45
+            loss_gen_all = loss_gen_f + loss_gen_s + loss_fm_f + loss_fm_s + loss_mel
             if learn_f0_vq:
-                loss_gen_all += f0_commit_loss * h.get('lambda_commit', None)
+                loss_gen_all += h.get('lambda_commit', None) * f0_commit_loss
             if learn_content_vq:
-                loss_gen_all += code_commit_loss * h.get('lambda_commit_code', None)
-
+                loss_gen_all += h.get('lambda_commit_code', None) * code_commit_loss
+            # Backward/Optim
             loss_gen_all.backward()
             optim_g.step()
 
             # STDOUT logging
             if steps % a.stdout_interval == 0:
                 with torch.no_grad():
-                    mel_error = F.l1_loss(y_mel, y_g_hat_mel).item()
+                    mel_error = F.l1_loss(out_mel_gt, out_mel_estim).item()
                 print(
                     'Steps : {:d}, Gen Loss Total : {:4.3f}, Mel-Spec. Error : {:4.3f}, s/b : {:4.3f}'.format(steps,
                                                                                                                 loss_gen_all,
@@ -200,31 +201,31 @@ def train(a, h):
                 torch.cuda.empty_cache()
                 val_err_tot = 0
                 with torch.no_grad():
-                    for j, batch in enumerate(validation_loader):
-                        x, y, _, y_mel = batch
-                        x = {k: v.to(device, non_blocking=False) for k, v in x.items()}
+                    for j, batch in enumerate(valid_loader):
+                        source, out_gt, _, out_mel_gt = batch
+                        source = {k: v.to(device, non_blocking=False) for k, v in source.items()}
 
-                        y_g_hat = generator(**x)
+                        out_estim = generator(**source)
                         if learn_f0_vq or learn_content_vq:
-                            y_g_hat, commit_losses, _ = y_g_hat
+                            out_estim, commit_losses, _ = out_estim
                             if learn_f0_vq:
                                 f0_commit_loss = commit_losses[1][0]
                                 val_err_tot += f0_commit_loss * h.get('lambda_commit', None)
                             if learn_content_vq:
                                 code_commit_loss = commit_losses[0][0]
                                 val_err_tot += code_commit_loss * h.get('lambda_commit_code', None)
-                        y_mel = torch.autograd.Variable(y_mel.to(device, non_blocking=False))
-                        y_g_hat_mel = mel_spectrogram(y_g_hat.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate,
+                        out_mel_gt = out_mel_gt.to(device, non_blocking=False)
+                        out_mel_estim = mel_spectrogram(out_estim.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate,
                                                         h.hop_size, h.win_size, h.fmin, h.fmax_for_loss)
-                        val_err_tot += F.l1_loss(y_mel, y_g_hat_mel).item()
+                        val_err_tot += F.l1_loss(out_mel_gt, out_mel_estim).item()
 
                         if j <= 4:
                             if steps == 0:
-                                sw.add_audio('gt/y_{}'.format(j), y[0], steps, h.sampling_rate)
-                                sw.add_figure('gt/y_spec_{}'.format(j), plot_spectrogram(y_mel[0].cpu()), steps)
+                                sw.add_audio('gt/y_{}'.format(j), out_gt[0], steps, h.sampling_rate)
+                                sw.add_figure('gt/y_spec_{}'.format(j), plot_spectrogram(out_mel_gt[0].cpu()), steps)
 
-                            sw.add_audio('generated/y_hat_{}'.format(j), y_g_hat[0], steps, h.sampling_rate)
-                            y_hat_spec = mel_spectrogram(y_g_hat[:1].squeeze(1), h.n_fft, h.num_mels,
+                            sw.add_audio('generated/y_hat_{}'.format(j), out_estim[0], steps, h.sampling_rate)
+                            y_hat_spec = mel_spectrogram(out_estim[:1].squeeze(1), h.n_fft, h.num_mels,
                                                             h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax)
                             sw.add_figure('generated/y_hat_spec_{}'.format(j),
                                             plot_spectrogram(y_hat_spec[:1].squeeze(0).cpu().numpy()), steps)

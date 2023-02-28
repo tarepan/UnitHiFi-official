@@ -40,6 +40,16 @@ class Quantizer(nn.Module):
 
 
 class CodeGenerator(Generator):
+    """Multi-use Network.
+    
+    You can use CodeGenerator as:
+      - Separated Decoder: Embedding + HiFi Generator
+      - Encoder-Decoder: Conv Encoder + VQ + HiFi Ganerator
+    Multi Encoder also supported:
+      - Content code
+      - fo
+      - Speaker
+    """
     def __init__(self, h):
         super().__init__(h)
 
@@ -78,15 +88,22 @@ class CodeGenerator(Generator):
 
     @staticmethod
     def _upsample(signal, max_frames):
+        """
+        Returns:
+            :: (B, Feat, T)
+        """
         if signal.dim() == 3:
-            bsz, channels, cond_length = signal.size()
+            # (B, Feat, T)
+            pass
         elif signal.dim() == 2:
+            # (B, Feat) -> (B, Feat, T=1)
             signal = signal.unsqueeze(2)
-            bsz, channels, cond_length = signal.size()
         else:
+            # (B,) -> (B, Feat=1, T=1)
             signal = signal.view(-1, 1, 1)
-            bsz, channels, cond_length = signal.size()
+        bsz, channels, cond_length = signal.size()
 
+        # (B, Feat, T) -> (B, Feat, T, 1) -> (B, Feat, T, ?)
         signal = signal.unsqueeze(3).repeat(1, 1, 1, max_frames // cond_length)
 
         # pad zeros as needed (if signal's shape does not divide completely with max_frames)
@@ -101,8 +118,8 @@ class CodeGenerator(Generator):
         """
         Args:
             kwargs
-                code - 
-                f0 - 
+                code - Content code series
+                f0 - Fundamental frequency series
                 spkr :: Optional[int] - speaker index (global feature)
         Returns:
             wave_estim - Estimated waveform
@@ -168,7 +185,7 @@ class CodeGenerator(Generator):
             x = torch.cat([x, feat], dim=1)
         #### /PreNet ##############################################################
 
-        # HiFi-GAN
+        # HiFi-GAN Generator
         wave_estim = super().forward(x)
 
         # Returns

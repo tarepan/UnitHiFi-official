@@ -124,8 +124,7 @@ def init_worker(queue, arguments):
         dataset = CodeDataset(file_list, -1, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size,
                               h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
                               f0=h.get('f0', None), multispkr=h.get('multispkr', None),
-                              f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False),
-                              pad=a.pad)
+                              f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False))
 
     if a.unseen_f0:
         dataset.f0_stats = torch.load(a.unseen_f0)
@@ -241,7 +240,6 @@ def main():
     parser.add_argument('--f0-stats', type=Path)
     parser.add_argument('--vc', action='store_true')
     parser.add_argument('--random-speakers', action='store_true')
-    parser.add_argument('--pad', default=None, type=int)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--parts', action='store_true')
     parser.add_argument('--unseen-f0', type=Path)
@@ -289,8 +287,7 @@ def main():
         dataset = CodeDataset(file_list, -1, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size,
                               h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
                               f0=h.get('f0', None), multispkr=h.get('multispkr', None),
-                              f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False),
-                              pad=a.pad)
+                              f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False))
 
     if a.debug:
         ids = list(range(1))
