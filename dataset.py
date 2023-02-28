@@ -86,6 +86,11 @@ hann_window = {}
 
 
 def parse_manifest(manifest):
+    """
+    Returns:
+        audio_files :: Path
+        codes :: DNArray   
+    """
     audio_files = []
     codes = []
 
@@ -111,6 +116,7 @@ def parse_manifest(manifest):
 
 
 def get_dataset_filelist(h):
+    """Acquire train/val's audio file path and content code array."""
     training_files, training_codes = parse_manifest(h.input_training_file)
     validation_files, validation_codes = parse_manifest(h.input_validation_file)
 
@@ -321,19 +327,18 @@ class CodeDataset(torch.utils.data.Dataset):
 
 
 class F0Dataset(torch.utils.data.Dataset):
-    def __init__(self, training_files, segment_size, sampling_rate, multispkr, f0_normalize, f0_stats):
+    def __init__(self, wave_paths, segment_size, sampling_rate, multispkr, f0_normalize, f0_stats):
         """
         Args:
-            training_files :: str  -
-            segment_size   :: int  - Clipping length
-            sampling_rate  :: int  - Configured waveform sampling rate
-            multispkr      :: str  - How to access speaker name
-            f0_normalize   :: bool - Whether to normalize the fo
-            f0_stats       :: str  - Path to the fo statistics file
+            wave_paths    :: str  - Path to the audio file
+            segment_size  :: int  - Clipping length
+            sampling_rate :: int  - Configured waveform sampling rate
+            multispkr     :: str  - How to access speaker name
+            f0_normalize  :: bool - Whether to normalize the fo
+            f0_stats      :: str  - Path to the fo statistics file
         """
         random.seed(1234)
-        self.segment_size, self.sampling_rate, self.multispkr, self.f0_normalize = segment_size, sampling_rate, multispkr, f0_normalize
-        self.audio_files, _ = training_files
+        self.audio_files, self.segment_size, self.sampling_rate, self.multispkr, self.f0_normalize = wave_paths, segment_size, sampling_rate, multispkr, f0_normalize
         self.f0_stats = torch.load(f0_stats)
         # spk_idx accessor
         spkrs = list(set([parse_speaker(f, self.multispkr) for f in self.audio_files]))

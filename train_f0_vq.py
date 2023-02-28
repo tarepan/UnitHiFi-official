@@ -68,8 +68,9 @@ def train(a, h):
 
     # Data
     train_filelist, valid_filelist = get_dataset_filelist(h)
-    trainset = F0Dataset(train_filelist, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
-    validset = F0Dataset(valid_filelist, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
+    train_wave_paths, valid_wave_paths = train_filelist[0], valid_filelist[0]
+    trainset = F0Dataset(train_wave_paths, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
+    validset = F0Dataset(valid_wave_paths, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
     train_loader = DataLoader(trainset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
     valid_loader = DataLoader(validset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
 
