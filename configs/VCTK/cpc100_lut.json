@@ -1,6 +1,6 @@
 {
-    "input_training_file": "datasets/VCTK/cpc100/train.txt",
-    "input_validation_file": "datasets/VCTK/cpc100/val.txt",
+    "input_training_file": "datasets/VCTK/cpc100/wav_wave/train.txt",
+    "input_validation_file": "datasets/VCTK/cpc100/wav_wave/val.txt",
 
     "resblock": "1",
     "num_gpus": 0,
