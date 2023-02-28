@@ -1,6 +1,6 @@
 {
-    "input_training_file":   "datasets/VCTK/cpc100/wav_wave/train.txt",
-    "input_validation_file": "datasets/VCTK/cpc100/wav_wave/val.txt",
+    "input_training_file":   "datasets/VCTK/cpc100/wav_wave/fixed_train.txt",
+    "input_validation_file": "datasets/VCTK/cpc100/wav_wave/fixed_val.txt",
 
     "resblock": "1",
     "batch_size": 16,
