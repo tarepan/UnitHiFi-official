@@ -152,7 +152,7 @@ def parse_speaker(path, method) -> str:
 class CodeDataset(torch.utils.data.Dataset):
     def __init__(self, training_files, segment_size, code_hop_size,
                 n_fft, num_mels, hop_size, win_size, sampling_rate, fmin,
-                fmax_loss=None, f0=None, multispkr=False, pad=None,
+                fmax_loss=None, f0=None, multispkr=False,
                 f0_stats=None, f0_normalize=False, vqvae=False):
         """
         Args:
@@ -170,7 +170,6 @@ class CodeDataset(torch.utils.data.Dataset):
         self.vqvae, self.f0, self.f0_normalize = vqvae, f0, f0_normalize
         self.f0_stats = torch.load(f0_stats) if f0_stats else None
 
-        self.pad = pad
         self.multispkr = multispkr
         if self.multispkr:
             # List of (Non-overlap) speaker names in the dataset
@@ -223,10 +222,6 @@ class CodeDataset(torch.utils.data.Dataset):
             # raise ValueError(f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR")
             import resampy
             audio = resampy.resample(audio, sampling_rate, self.sampling_rate)
-        ## Padding
-        if self.pad:
-            padding = self.pad - (audio.shape[-1] % self.pad)
-            audio = np.pad(audio, (0, padding), "constant", constant_values=0)
         ## Normalization
         audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
         ## Trim audio ending
