@@ -3,7 +3,6 @@
     "input_validation_file": "datasets/VCTK/cpc100/wav_wave/val.txt",
 
     "resblock": "1",
-    "num_gpus": 0,
     "batch_size": 16,
     "learning_rate": 0.0002,
     "adam_b1": 0.8,
@@ -49,10 +48,5 @@
     "lambda_commit": 0.02,
     "sampling_rate": 16000,
 
-    "num_workers": 1,
-
-    "dist_config": {
-        "dist_backend": "nccl",
-        "dist_url": "env://"
-    }
+    "num_workers": 1
 }
