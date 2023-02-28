@@ -207,22 +207,29 @@ class CodeDataset(torch.utils.data.Dataset):
         """
         Returns:
             feats
+                code
+                f0 :: Optional[] - Fundamental frequency series, can be normalized
                 spkr :: Optional[int] - Speaker index, exist only if `multispkr` is defined
+            audio - The waveform
+            filename
+            melspec - Ground-Truth melspectrogram of the wave
         """
         filename = self.audio_files[index]
+
+        # Waveform preprocessing
+        ## Load :: (T,)
         audio, sampling_rate = load_audio(filename)
         if sampling_rate != self.sampling_rate:
             # raise ValueError(f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR")
             import resampy
             audio = resampy.resample(audio, sampling_rate, self.sampling_rate)
-
+        ## Padding
         if self.pad:
             padding = self.pad - (audio.shape[-1] % self.pad)
             audio = np.pad(audio, (0, padding), "constant", constant_values=0)
-        # Normalization
+        ## Normalization
         audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
-
-        # Trim audio ending
+        ## Trim audio ending
         if self.vqvae:
             code_length = audio.shape[0] // self.code_hop_size
         else:
@@ -230,57 +237,43 @@ class CodeDataset(torch.utils.data.Dataset):
             code = self.codes[index][:code_length]
         audio = audio[:code_length * self.code_hop_size]
         assert self.vqvae or audio.shape[0] // self.code_hop_size == code.shape[0], "Code audio mismatch"
-
+        ## Clipping :: (T,) -> (1, T) -> (1, T=segment) - If shorter than segment at first, repeat then clip
         while audio.shape[0] < self.segment_size:
             audio = np.hstack([audio, audio])
             if not self.vqvae:
                 code = np.hstack([code, code])
-
-        audio = torch.FloatTensor(audio)
-        audio = audio.unsqueeze(0)
-
-        assert audio.size(1) >= self.segment_size, "Padding not supported!!"
+        audio = torch.FloatTensor(audio).unsqueeze(0)
         if self.vqvae:
             audio = self._sample_interval([audio])[0]
         else:
             audio, code = self._sample_interval([audio, code])
 
-        mel_loss = mel_spectrogram(audio, self.n_fft, self.num_mels,
-                                   self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss,
-                                   center=False)
-
-        if self.vqvae:
-            feats = {
-                "code": audio.view(1, -1).numpy()
-            }
-        else:
-            feats = {"code": code.squeeze()}
-
+        # Feature extraction
+        feats = {}
+        ## Melspectrogram/Content/fo/Speaker
+        melspec = mel_spectrogram(audio, self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss, center=False)
+        feats['code'] = audio.view(1, -1).numpy() if self.vqvae else code.squeeze()
         if self.f0:
+            # Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
             try:
                 f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=False)
             except:
                 f0 = np.zeros((1, 1, audio.shape[-1] // 80))
-            f0 = f0.astype(np.float32)
-            feats['f0'] = f0.squeeze(0)
-
+            f0 = f0.astype(np.float32).squeeze(0)
+            # Normalization with pre-calculated statistics
+            if self.f0_normalize:
+                spkr_id = self._get_spk_idx(index).item()
+                spk_is_not_in_stats = spkr_id not in self.f0_stats
+                mean = self.f0_stats['f0_mean'] if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_mean']
+                std  = self.f0_stats['f0_std']  if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_std']
+                # Normalize non-zero components
+                ii = f0 != 0
+                f0[ii] = (f0[ii] - mean) / std
+            feats['f0'] = f0
         if self.multispkr:
             feats['spkr'] = self._get_spk_idx(index)
 
-        if self.f0_normalize:
-            spkr_id = self._get_spk_idx(index).item()
-
-            if spkr_id not in self.f0_stats:
-                mean = self.f0_stats['f0_mean']
-                std = self.f0_stats['f0_std']
-            else:
-                mean = self.f0_stats[spkr_id]['f0_mean']
-                std = self.f0_stats[spkr_id]['f0_std']
-            # Normalize non-zero components
-            ii = feats['f0'] != 0
-            feats['f0'][ii] = (feats['f0'][ii] - mean) / std
-
-        return feats, audio.squeeze(0), str(filename), mel_loss.squeeze()
+        return feats, audio.squeeze(0), str(filename), melspec.squeeze()
 
     def _get_spk_idx(self, uttr_idx):
         """Get speaker index from utterance index.
