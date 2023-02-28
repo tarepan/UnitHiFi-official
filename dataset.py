@@ -157,34 +157,24 @@ class CodeDataset(torch.utils.data.Dataset):
                  f0_interp=False, vqvae=False):
         """
         Args:
+            training_files - Audio file path list & Content code NDArray list
             multispkr - 'Not use speaker' if False else 'How to access speaker name'
 
             f0_normalize - Whether to normalize fo
         """
-        self.audio_files, self.codes = training_files
         random.seed(1234)
-        self.segment_size = segment_size
-        self.code_hop_size = code_hop_size
-        self.sampling_rate = sampling_rate
-        self.split = split
-        self.n_fft = n_fft
-        self.num_mels = num_mels
-        self.hop_size = hop_size
-        self.win_size = win_size
-        self.fmin = fmin
-        self.fmax = fmax
-        self.fmax_loss = fmax_loss
-        self.cached_wav = None
-        self.n_cache_reuse = n_cache_reuse
-        self._cache_ref_count = 0
-        self.device = device
+        self.audio_files, self.codes = training_files
+        self.segment_size, self.code_hop_size, self.sampling_rate = segment_size, code_hop_size, sampling_rate
+        # `mel_spectrogram` specific values
+        self.n_fft, self.num_mels, self.hop_size, self.win_size, self.fmin, self.fmax_loss = n_fft, num_mels, hop_size, win_size, fmin, fmax_loss
+        # cache
+        self.cached_wav, self.n_cache_reuse, self._cache_ref_count = None, n_cache_reuse, 0
+        # VQVAE flag
         self.vqvae = vqvae
-        self.f0 = f0
-        self.f0_normalize = f0_normalize
-        self.f0_feats = f0_feats
-        self.f0_interp = f0_interp
-        self.f0_median = f0_median
+        # fo flags
+        self.f0, self.f0_normalize, self.f0_feats, self.f0_interp, self.f0_median = f0, f0_normalize, f0_feats, f0_interp, f0_median
         self.f0_stats = torch.load(f0_stats) if f0_stats else None
+
         self.pad = pad
         self.multispkr = multispkr
         if self.multispkr:
