@@ -29,8 +29,8 @@ Requirements:
 * PyTorch v1.8
 * Install dependencies
     ```bash
-    git clone https://github.com/facebookresearch/speech-resynthesis.git
-    cd speech-resynthesis
+    git clone https://github.com/tarepan/UnitHiFi-official.git
+    cd UnitHiFi-official
     pip install -r requirements.txt
     ```
 ### Data
@@ -47,13 +47,21 @@ Requirements:
    ```
 
 #### For VCTK:
-1. Download VCTK dataset from [here](https://datashare.ed.ac.uk/handle/10283/3443) into ```data/VCTK-Corpus``` folder.
-2. Downsample audio from 48 kHz to 16 kHz, trim trailing silences and pad
+1. Download VCTK dataset through `speechcorpusy`, move contents under ```data/```.
+   ```python
+   from speechcorpusy import load_preset
+   corpus = load_preset("VCTK", root="<your_root>", download=False).get_contents()
+   ```
+   ```bash
+   mkdir "data"
+   mv "tmp/corpuses/VCTK/ver0_92/contents/VCTK-Corpus" "data"
+   ```
+2. Downsample audio to 16 kHz, trim trailing silences and pad
    ```bash
    python ./scripts/preprocess.py \
-   --srcdir data/VCTK-Corpus/wav48_silence_trimmed \
-   --outdir data/VCTK-Corpus/wav16_silence_trimmed_padded \
-   --pad --postfix mic2.flac
+   --srcdir "data/VCTK-Corpus" \
+   --outdir "data/VCTK-Corpus/wav16_silence_trimmed_padded" \
+   --trim --pad
    ```
 
 ## Training
