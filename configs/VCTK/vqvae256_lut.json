@@ -32,9 +32,6 @@
 
     "f0_stats": "datasets/VCTK/f0_stats.th",
     "f0_normalize": true,
-    "f0_feats": false,
-    "f0_median": false,
-    "f0_interp": false,
 
     "f0_quantizer_path": "checkpoints/vctk_f0_vq/g_00400000",
     "f0_quantizer": {

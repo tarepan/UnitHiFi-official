@@ -122,12 +122,9 @@ def init_worker(queue, arguments):
     else:
         file_list = parse_manifest(a.input_code_file)
         dataset = CodeDataset(file_list, -1, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size,
-                              h.sampling_rate, h.fmin, h.fmax, n_cache_reuse=0,
-                              fmax_loss=h.fmax_for_loss, device=device,
+                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
                               f0=h.get('f0', None), multispkr=h.get('multispkr', None),
-                              f0_stats=h.get('f0_stats', None), f0_normalize=h.get('f0_normalize', False),
-                              f0_feats=h.get('f0_feats', False), f0_median=h.get('f0_median', False),
-                              f0_interp=h.get('f0_interp', False), vqvae=h.get('code_vq_params', False),
+                              f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False),
                               pad=a.pad)
 
     if a.unseen_f0:
@@ -210,15 +207,16 @@ def inference(item_index):
                 f0[ii] += new_mean_
                 code['f0'] = f0
 
-            if h.get('f0_feats', False):
-                f0_stats_ = torch.load(h["f0_stats"])
-                if k not in f0_stats_:
-                    mean = f0_stats_['f0_mean']
-                    std = f0_stats_['f0_std']
-                else:
-                    mean = f0_stats_[k]['f0_mean']
-                    std = f0_stats_[k]['f0_std']
-                code['f0_stats'] = torch.FloatTensor([mean, std]).view(1, -1).to(device)
+            # NOTE: 'f0_feats' is False in all config, so deleted. But I do not yet understand meaning of this processing
+            # if h.get('f0_feats', False):
+            #     f0_stats_ = torch.load(h["f0_stats"])
+            #     if k not in f0_stats_:
+            #         mean = f0_stats_['f0_mean']
+            #         std = f0_stats_['f0_std']
+            #     else:
+            #         mean = f0_stats_[k]['f0_mean']
+            #         std = f0_stats_[k]['f0_std']
+            #     code['f0_stats'] = torch.FloatTensor([mean, std]).view(1, -1).to(device)
 
             audio, rtf = generate(h, generator, code)
 
@@ -289,11 +287,9 @@ def main():
     else:
         file_list = parse_manifest(a.input_code_file)
         dataset = CodeDataset(file_list, -1, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size,
-                              h.sampling_rate, h.fmin, h.fmax, n_cache_reuse=0, fmax_loss=h.fmax_for_loss, device=device,
+                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
                               f0=h.get('f0', None), multispkr=h.get('multispkr', None),
-                              f0_stats=h.get('f0_stats', None), f0_normalize=h.get('f0_normalize', False),
-                              f0_feats=h.get('f0_feats', False), f0_median=h.get('f0_median', False),
-                              f0_interp=h.get('f0_interp', False), vqvae=h.get('code_vq_params', False),
+                              f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False),
                               pad=a.pad)
 
     if a.debug:

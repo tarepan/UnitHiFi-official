@@ -150,11 +150,10 @@ def parse_speaker(path, method) -> str:
 
 
 class CodeDataset(torch.utils.data.Dataset):
-    def __init__(self, training_files, segment_size, code_hop_size, n_fft, num_mels,
-                 hop_size, win_size, sampling_rate, fmin, fmax, split=True, n_cache_reuse=1,
-                 device=None, fmax_loss=None, f0=None, multispkr=False, pad=None,
-                 f0_stats=None, f0_normalize=False, f0_feats=False, f0_median=False,
-                 f0_interp=False, vqvae=False):
+    def __init__(self, training_files, segment_size, code_hop_size,
+                n_fft, num_mels, hop_size, win_size, sampling_rate, fmin,
+                fmax_loss=None, f0=None, multispkr=False, pad=None,
+                f0_stats=None, f0_normalize=False, vqvae=False):
         """
         Args:
             training_files - Audio file path list & Content code NDArray list
@@ -167,12 +166,8 @@ class CodeDataset(torch.utils.data.Dataset):
         self.segment_size, self.code_hop_size, self.sampling_rate = segment_size, code_hop_size, sampling_rate
         # `mel_spectrogram` specific values
         self.n_fft, self.num_mels, self.hop_size, self.win_size, self.fmin, self.fmax_loss = n_fft, num_mels, hop_size, win_size, fmin, fmax_loss
-        # cache
-        self.cached_wav, self.n_cache_reuse, self._cache_ref_count = None, n_cache_reuse, 0
-        # VQVAE flag
-        self.vqvae = vqvae
-        # fo flags
-        self.f0, self.f0_normalize, self.f0_feats, self.f0_interp, self.f0_median = f0, f0_normalize, f0_feats, f0_interp, f0_median
+        # Flags
+        self.vqvae, self.f0, self.f0_normalize = vqvae, f0, f0_normalize
         self.f0_stats = torch.load(f0_stats) if f0_stats else None
 
         self.pad = pad
@@ -215,24 +210,17 @@ class CodeDataset(torch.utils.data.Dataset):
                 spkr :: Optional[int] - Speaker index, exist only if `multispkr` is defined
         """
         filename = self.audio_files[index]
-        if self._cache_ref_count == 0:
-            audio, sampling_rate = load_audio(filename)
-            if sampling_rate != self.sampling_rate:
-                # raise ValueError("{} SR doesn't match target {} SR".format(
-                #     sampling_rate, self.sampling_rate))
-                import resampy
-                audio = resampy.resample(audio, sampling_rate, self.sampling_rate)
+        audio, sampling_rate = load_audio(filename)
+        if sampling_rate != self.sampling_rate:
+            # raise ValueError(f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR")
+            import resampy
+            audio = resampy.resample(audio, sampling_rate, self.sampling_rate)
 
-            if self.pad:
-                padding = self.pad - (audio.shape[-1] % self.pad)
-                audio = np.pad(audio, (0, padding), "constant", constant_values=0)
-            audio = audio / MAX_WAV_VALUE
-            audio = normalize(audio) * 0.95
-            self.cached_wav = audio
-            self._cache_ref_count = self.n_cache_reuse
-        else:
-            audio = self.cached_wav
-            self._cache_ref_count -= 1
+        if self.pad:
+            padding = self.pad - (audio.shape[-1] % self.pad)
+            audio = np.pad(audio, (0, padding), "constant", constant_values=0)
+        # Normalization
+        audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
 
         # Trim audio ending
         if self.vqvae:
@@ -270,7 +258,7 @@ class CodeDataset(torch.utils.data.Dataset):
 
         if self.f0:
             try:
-                f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=self.f0_interp)
+                f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=False)
             except:
                 f0 = np.zeros((1, 1, audio.shape[-1] // 80))
             f0 = f0.astype(np.float32)
@@ -288,17 +276,9 @@ class CodeDataset(torch.utils.data.Dataset):
             else:
                 mean = self.f0_stats[spkr_id]['f0_mean']
                 std = self.f0_stats[spkr_id]['f0_std']
+            # Normalize non-zero components
             ii = feats['f0'] != 0
-
-            if self.f0_median:
-                med = np.median(feats['f0'][ii])
-                feats['f0'][~ii] = med
-                feats['f0'][~ii] = (feats['f0'][~ii] - mean) / std
-
             feats['f0'][ii] = (feats['f0'][ii] - mean) / std
-
-            if self.f0_feats:
-                feats['f0_stats'] = torch.FloatTensor([mean, std]).view(-1).numpy()
 
         return feats, audio.squeeze(0), str(filename), mel_loss.squeeze()
 

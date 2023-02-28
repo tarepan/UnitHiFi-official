@@ -32,9 +32,6 @@
 
     "f0_stats": "datasets/LJSpeech/f0_stats.pth",
     "f0_normalize": true,
-    "f0_feats": false,
-    "f0_median": false,
-    "f0_interp": false,
 
     "f0_quantizer_path": "checkpoints/lj_f0_vq/g_00400000",
     "f0_quantizer": {

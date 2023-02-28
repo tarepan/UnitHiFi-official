@@ -32,9 +32,6 @@
 
     "f0_stats": null,
     "f0_normalize": false,
-    "f0_feats": false,
-    "f0_median": false,
-    "f0_interp": false,
 
     "code_vq_params": {
         "l_bins": 256,
