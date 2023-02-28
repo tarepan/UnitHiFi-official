@@ -21,7 +21,6 @@
 
     "segment_size": 8960,
     "code_hop_size": 320,
-    "f0": true,
     "multispkr": "single",
     "num_mels": 80,
     "num_freq": 1025,
@@ -29,6 +28,7 @@
     "hop_size": 256,
     "win_size": 1024,
 
+    "f0": true,
     "f0_stats": "datasets/LJSpeech/f0_stats.pth",
     "f0_normalize": true,
 
