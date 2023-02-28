@@ -17,20 +17,32 @@ from tqdm import tqdm
 
 
 def pad_data(p, out_dir, trim=False, pad=False):
+    """Preprocessing.
+
+    - Resampling
+    - Silence trimming
+    - Padding
+    """
+    # Read
     data, sr = sf.read(p)
+
+    # Resampling
     if sr != 16000:
         data = resampy.resample(data, sr, 16000)
         sr = 16000
 
+    # Silence trimming at Head/Tail
     if trim:
         data, _ = librosa.effects.trim(data, 20)
 
+    # Pad tail for round wave
     if pad:
-        if data.shape[0] % 1280 != 0:
-            data = np.pad(data, (0, 1280 - data.shape[0] % 1280), mode='constant',
-                          constant_values=0)
-        assert data.shape[0] % 1280 == 0
+        unit_length = 1280
+        if data.shape[0] % unit_length != 0:
+            data = np.pad(data, (0, unit_length - data.shape[0] % unit_length), mode='constant', constant_values=0)
+        assert data.shape[0] % unit_length == 0
 
+    # Write
     outpath = out_dir / p.name
     outpath.parent.mkdir(exist_ok=True, parents=True)
     sf.write(outpath, data, sr)
@@ -42,7 +54,7 @@ def main():
     parser.add_argument('--outdir', type=Path, required=True)
     parser.add_argument('--trim', action='store_true')
     parser.add_argument('--pad', action='store_true')
-    parser.add_argument('--postfix', type=str, default='wav')
+    parser.add_argument('--postfix', type=str, default='wav') # wave file extension
     args = parser.parse_args()
 
     files = list(Path(args.srcdir).glob(f'**/*{args.postfix}'))

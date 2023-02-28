@@ -87,9 +87,11 @@ hann_window = {}
 
 def parse_manifest(manifest):
     """
+    Args:
+        manifest - Path to the file containing audio file path and encoded contents
     Returns:
-        audio_files :: Path
-        codes :: DNArray   
+        audio_files :: Path - Audio file paths
+        codes :: DNArray - Encoded contents
     """
     audio_files = []
     codes = []
@@ -97,6 +99,7 @@ def parse_manifest(manifest):
     with open(manifest) as info:
         for line in info.readlines():
             if line[0] == '{':
+                # {"audio": "<path>", "SSL_type: "X X X ...", "duration": 1.9}
                 sample = eval(line.strip())
                 if 'cpc_km100' in sample:
                     k = 'cpc_km100'
@@ -104,10 +107,9 @@ def parse_manifest(manifest):
                     k = 'vqvae256'
                 else:
                     k = 'hubert'
-
-                codes += [torch.LongTensor(
-                    [int(x) for x in sample[k].split(' ')]
-                ).numpy()]
+                # Read content codes
+                codes += [torch.LongTensor([int(x) for x in sample[k].split(' ')]).numpy()]
+                # Read audio file path
                 audio_files += [Path(sample["audio"])]
             else:
                 audio_files += [Path(line.strip())]
