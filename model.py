@@ -40,38 +40,22 @@ class FoVQVAE(nn.Module):
 
 
 class CodeGenerator(Generator):
-    """Multi-use Network.
+    """Decoder with Embedding + HiFi-GAN Generator.
     
-    You can use CodeGenerator as:
-      - Separated Decoder: Embedding + HiFi Generator
-      - Encoder-Decoder: Conv Encoder + VQ + HiFi Ganerator
     Multi Encoder also supported:
-      - Content code
+      - Content
       - fo
       - Speaker
     """
     def __init__(self, h):
         super().__init__(h)
 
-        # Content - Learnable Encoder-VQ | Learnable Embdding
-        self.code_encoder, self.code_vq, self.dict = None, None, None
-        if h.get('lambda_commit_code', None):
-            # Enc-VQ (`code_encoder`+`code_vq`)
-            self.code_encoder = Encoder(**h.code_encoder_params)
-            self.code_vq = Bottleneck(**h.code_vq_params)
-        else:
-            # Emb (`dict`)
-            self.dict = nn.Embedding(h.num_embeddings, h.embedding_dim)
+        # Content - Embdding
+        self.emb_content = nn.Embedding(h.num_embeddings, h.embedding_dim)
 
-        # fo - None | Learnable Encoder-VQ | Fixed Encoder-VQ + Learnable Embedding
+        # fo - None | Fixed Encoder-VQ + Learnable Embedding
         self.use_f0 = h.get('f0', None)
-        self.encoder, self.vq, self.quantizer = None, None, None
-        if h.get("lambda_commit", None):
-            # NOTE: Current configs do NOT used
-            # Enc-VQ (`encoder`+`vq`)
-            assert self.use_f0, "Requires F0 set"
-            self.encoder = Encoder(**h.f0_encoder_params)
-            self.vq = Bottleneck(**h.f0_vq_params)
+        self.quantizer = None
         if h.get('f0_quantizer_path', None):
             # Fixed Enc-VQ + Emb (`quantizer` + `f0_dict`)
             assert self.use_f0, "Requires F0 set"
@@ -118,41 +102,20 @@ class CodeGenerator(Generator):
         """
         Args:
             kwargs
-                code - Content code series
+                code - Content unit series
                 f0 - Fundamental frequency series
                 spkr :: Optional[int] - speaker index (global feature)
         Returns:
             wave_estim - Estimated waveform
-            (code_commit_losses, f0_commit_losses) :: Optional - content/fo Commitment loss
-            (code_metrics, f0_metrics) :: Optional - content/fo Metrics
         """
-        #### PreNet ###############################################################
-        # Content
-        code = kwargs['code']
-        code_commit_losses, code_metrics = None, None
-        if self.code_vq:
-            if code.dtype is torch.int64:
-                # VQ Query: index -> z_q
-                x = self.code_vq.level_blocks[0].k[code].transpose(1, 2)
-            else:
-                # Encode + VQ: feat -> z -> z_q
-                code_h = self.code_encoder(code)
-                _, code_h_q, code_commit_losses, code_metrics = self.code_vq(code_h)
-                x = code_h_q[0]
-        else:
-            # Embedding: index -> emb
-            x = self.dict(code).transpose(1, 2)
-
-        # [Optional] fo
-        f0_commit_losses, f0_metrics = None, None
+        # PreNet
+        unit_content = kwargs['code']
+        ## Content - Embedding: index -> emb
+        x = self.emb_content(unit_content).transpose(1, 2)
+        ## [Optional] fo
         if self.use_f0:
             f0 = kwargs['f0']
-            if self.vq:
-                # Enc-VQ
-                f0_h = self.encoder(f0)
-                _, f0_h_q, f0_commit_losses, f0_metrics = self.vq(f0_h)
-                f0 = f0_h_q[0]
-            elif self.quantizer:
+            if self.quantizer:
                 # Fixed-Enc-VQ (in-place fo encoding) + Emb
                 self.quantizer.eval()
                 assert not self.quantizer.training, "VQ is in training status!!!"
@@ -168,29 +131,22 @@ class CodeGenerator(Generator):
                 f0 = self._upsample(f0, x.shape[-1])
             ## Concat
             x = torch.cat([x, f0], dim=1)
-
-        # [Optional] Global speaker embedding
+        ## [Optional] Global speaker embedding
         if self.use_spk:
             global_spk_emb = self.spk_emb(kwargs['spkr']).transpose(1, 2)
             # Up↑/Concat
             spk_emb_series = self._upsample(global_spk_emb, x.shape[-1])
             x = torch.cat([x, spk_emb_series], dim=1)
-
-        # [Optional] Other feature
+        ## [Optional] Other feature
         for k, feat in kwargs.items():
             if k in ['spkr', 'code', 'f0']:
                 continue
             # Up↑/Concat
             feat = self._upsample(feat, x.shape[-1])
             x = torch.cat([x, feat], dim=1)
-        #### /PreNet ##############################################################
 
         # HiFi-GAN Generator
         wave_estim = super().forward(x)
 
         # Returns
-        if self.vq or self.code_vq:
-            # For learnable encoders
-            return wave_estim, (code_commit_losses, f0_commit_losses), (code_metrics, f0_metrics)
-        else:
-            return wave_estim
+        return wave_estim

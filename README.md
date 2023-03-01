@@ -82,25 +82,14 @@ Currently, we support the following training schemes:
 | -------- |------------------------ | --------------- | ------------------------------------------|
 | LJSpeech | HuBERT                  | 100             | ```configs/LJSpeech/hubert100_lut.json``` |
 | LJSpeech | CPC                     | 100             | ```configs/LJSpeech/cpc100_lut.json```    |
-| LJSpeech | VQVAE                   | 256             | ```configs/LJSpeech/vqvae256_lut.json```  |
 | VCTK     | HuBERT                  | 100             | ```configs/VCTK/hubert100_lut.json```     |
 | VCTK     | CPC                     | 100             | ```configs/VCTK/cpc100_lut.json```        |
-| VCTK     | VQVAE                   | 256             | ```configs/VCTK/vqvae256_lut.json```      |
 
 ### 1. Encoder<sub>content</sub> Training
-#### CPC or HuBERT
 It's tough work, but you can try SSL by yourself.  
 Fortunately, pretrained CPC and HuBERT is provided. You can skip this step.  
-#### VQVAE
-First, download [LibriLight](https://github.com/facebookresearch/libri-light) dataset and move it to ```data/LibriLight```.  
-Then, run the training of content VQVAE.  
-```bash
-python train.py \
---checkpoint_path checkpoints/ll_vq \
---config configs/LibriLight/vqvae256.json
-```
+
 ### 2. z_c Extraction
-#### CPC or HuBERT
 For LJSpeech or VCTK, we provide extracted z_c! In this case, you can skip this step.  
 
 If you hope to encode other datasets, follow the instructions described in the [GSLM code](https://github.com/pytorch/fairseq/tree/master/examples/textless_nlp/gslm).  
@@ -119,22 +108,6 @@ python parse_hubert_codes.py \
 --codes hubert_output_file \
 --manifest hubert_tsv_file \
 --outdir parsed_hubert 
-```
-#### VQVAE
-
-To extract codes:
-```bash
-python infer_vqvae_codes.py \
---input_dir folder_with_wavs_to_code \
---output_dir vqvae_output_folder \
---checkpoint_file checkpoints/ll_vq
-```
-
-To parse output:
-```bash
- python parse_vqvae_codes.py \
- --manifest vqvae_output_file \
- --outdir parsed_vqvae
 ```
 
 ### 3. Encoder<sub>f<sub>o</sub></sub> training
@@ -184,6 +157,7 @@ python inference.py \
 ```
 
 ## Difference from the Paper
+- Encoder<sub>content</sub>=VQVAE is disabled (original repository supports this)
 - Encoder<sub>speaker</sub> is just Embedding, not LSTM
 
 ## Citation

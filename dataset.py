@@ -159,7 +159,7 @@ class CodeDataset(torch.utils.data.Dataset):
     def __init__(self, training_files, segment_size, code_hop_size,
                 n_fft, num_mels, hop_size, win_size, sampling_rate, fmin,
                 fmax_loss=None, f0=None, multispkr=False,
-                f0_stats=None, f0_normalize=False, vqvae=False):
+                f0_stats=None, f0_normalize=False):
         """
         Args:
             training_files - Audio file path list & Content code NDArray list
@@ -173,7 +173,7 @@ class CodeDataset(torch.utils.data.Dataset):
         # `mel_spectrogram` specific values
         self.n_fft, self.num_mels, self.hop_size, self.win_size, self.fmin, self.fmax_loss = n_fft, num_mels, hop_size, win_size, fmin, fmax_loss
         # Flags
-        self.vqvae, self.f0, self.f0_normalize = vqvae, f0, f0_normalize
+        self.f0, self.f0_normalize = f0, f0_normalize
         self.f0_stats = torch.load(f0_stats) if f0_stats else None
 
         self.multispkr = multispkr
@@ -236,29 +236,22 @@ class CodeDataset(torch.utils.data.Dataset):
         audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
         ## Length matching - Align with hop size, and match length of audio and code
         len_audio_code_scale = audio.shape[0] // self.code_hop_size
-        if self.vqvae:
-            matched_len_code = len_audio_code_scale
-        else:
-            matched_len_code = min(len_audio_code_scale, self.codes[index].shape[0])
-            code = self.codes[index][:matched_len_code]
+        matched_len_code = min(len_audio_code_scale, self.codes[index].shape[0])
+        code = self.codes[index][:matched_len_code]
         audio = audio[:matched_len_code * self.code_hop_size]
-        assert self.vqvae or len_audio_code_scale == code.shape[0], "Code audio mismatch"
+        assert len_audio_code_scale == code.shape[0], "Code audio mismatch"
         ## Clipping :: (T,) -> (1, T) -> (1, T=segment) - If shorter than segment at first, repeat then clip
         while audio.shape[0] < self.segment_size:
             audio = np.hstack([audio, audio])
-            if not self.vqvae:
-                code = np.hstack([code, code])
+            code  = np.hstack([code, code])
         audio = torch.FloatTensor(audio).unsqueeze(0)
-        if self.vqvae:
-            audio = self._sample_interval([audio])[0]
-        else:
-            audio, code = self._sample_interval([audio, code])
+        audio, code = self._sample_interval([audio, code])
 
         # Feature extraction
         feats = {}
         ## Melspectrogram/Content/fo/Speaker
         melspec = mel_spectrogram(audio, self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss, center=False)
-        feats['code'] = audio.view(1, -1).numpy() if self.vqvae else code.squeeze()
+        feats['code'] = code.squeeze()
         if self.f0:
             # Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
             try:

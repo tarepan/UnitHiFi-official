@@ -47,10 +47,6 @@ def train(a, h):
     mpd = MultiPeriodDiscriminator().to(device)
     msd = MultiScaleDiscriminator().to(device)
 
-    # Mode flags
-    learn_f0_vq      = h.get('f0_vq_params', None)
-    learn_content_vq = h.get('code_vq_params', None)
-
     print(generator)
     os.makedirs(a.checkpoint_path, exist_ok=True)
     print("checkpoints directory : ", a.checkpoint_path)
@@ -86,11 +82,9 @@ def train(a, h):
     training_filelist, validation_filelist = get_dataset_filelist(h)
 
     trainset = CodeDataset(training_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
-                            multispkr=h.get('multispkr', None), vqvae=h.get('code_vq_params', False),
-                            f0=h.get('f0', None), f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
+                            multispkr=h.get('multispkr', None), f0=h.get('f0', None), f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
     validset = CodeDataset(validation_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
-                            multispkr=h.get('multispkr', None), vqvae=h.get('code_vq_params', False),
-                            f0=h.get('f0', None), f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
+                            multispkr=h.get('multispkr', None), f0=h.get('f0', None), f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
     train_loader = DataLoader(trainset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
     valid_loader = DataLoader(validset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
 
@@ -103,7 +97,7 @@ def train(a, h):
         start = time.time()
         print(f"Epoch: {epoch + 1}")
 
-        for i, batch in enumerate(train_loader):
+        for _, batch in enumerate(train_loader):
             start_b = time.time()
 
             source, out_gt, _, out_mel_gt = batch
@@ -113,16 +107,6 @@ def train(a, h):
 
             # Forward
             out_estim = generator(**source)
-            # Losses from Learnable VQ (primarily for VQVAE_fo)
-            if learn_content_vq or learn_f0_vq:
-                out_estim, content_fo_commit_losses, content_fo_metrics = out_estim
-                if learn_content_vq:
-                    code_commit_loss = content_fo_commit_losses[0][0]
-                    code_metrics     =       content_fo_metrics[0][0]
-                if learn_f0_vq:
-                    f0_commit_loss   = content_fo_commit_losses[1][0]
-                    f0_metrics       =       content_fo_metrics[1][0]
-            assert out_estim.shape == out_gt.shape, f"Mismatch in vocoder output shape - {out_estim.shape} != {out_gt.shape}"
             # STFT loss
             out_mel_estim = mel_spectrogram(out_estim.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax_for_loss)
 
@@ -151,10 +135,6 @@ def train(a, h):
             loss_fm_s = feature_loss(fmap_s_r, fmap_s_g)
             loss_mel = F.l1_loss(out_mel_gt, out_mel_estim) * 45
             loss_gen_all = loss_gen_f + loss_gen_s + loss_fm_f + loss_fm_s + loss_mel
-            if learn_f0_vq:
-                loss_gen_all += h.get('lambda_commit', None) * f0_commit_loss
-            if learn_content_vq:
-                loss_gen_all += h.get('lambda_commit_code', None) * code_commit_loss
             # Backward/Optim
             loss_gen_all.backward()
             optim_g.step()
@@ -182,16 +162,6 @@ def train(a, h):
             if steps % a.summary_interval == 0:
                 sw.add_scalar("training/gen_loss_total", loss_gen_all, steps)
                 sw.add_scalar("training/mel_spec_error", mel_error, steps)
-                if learn_f0_vq:
-                    sw.add_scalar("training/commit_error", f0_commit_loss, steps)
-                    sw.add_scalar("training/used_curr", f0_metrics['used_curr'].item(), steps)
-                    sw.add_scalar("training/entropy", f0_metrics['entropy'].item(), steps)
-                    sw.add_scalar("training/usage", f0_metrics['usage'].item(), steps)
-                if learn_content_vq:
-                    sw.add_scalar("training/code_commit_error", code_commit_loss, steps)
-                    sw.add_scalar("training/code_used_curr", code_metrics['used_curr'].item(), steps)
-                    sw.add_scalar("training/code_entropy", code_metrics['entropy'].item(), steps)
-                    sw.add_scalar("training/code_usage", code_metrics['usage'].item(), steps)
 
             # Validation
             if steps % a.validation_interval == 0:  # and steps != 0:
@@ -204,14 +174,6 @@ def train(a, h):
                         source = {k: v.to(device, non_blocking=False) for k, v in source.items()}
 
                         out_estim = generator(**source)
-                        if learn_f0_vq or learn_content_vq:
-                            out_estim, commit_losses, _ = out_estim
-                            if learn_f0_vq:
-                                f0_commit_loss = commit_losses[1][0]
-                                val_err_tot += f0_commit_loss * h.get('lambda_commit', None)
-                            if learn_content_vq:
-                                code_commit_loss = commit_losses[0][0]
-                                val_err_tot += code_commit_loss * h.get('lambda_commit_code', None)
                         out_mel_gt = out_mel_gt.to(device, non_blocking=False)
                         out_mel_estim = mel_spectrogram(out_estim.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate,
                                                         h.hop_size, h.win_size, h.fmin, h.fmax_for_loss)
@@ -230,10 +192,6 @@ def train(a, h):
 
                     val_err = val_err_tot / (j + 1)
                     sw.add_scalar("validation/mel_spec_error", val_err, steps)
-                    if learn_f0_vq:
-                        sw.add_scalar("validation/commit_error", f0_commit_loss, steps)
-                    if learn_content_vq:
-                        sw.add_scalar("validation/code_commit_error", code_commit_loss, steps)
                 generator.train()
 
             steps += 1
