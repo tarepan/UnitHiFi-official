@@ -157,34 +157,29 @@ def parse_speaker(path, method) -> str:
 
 class CodeDataset(torch.utils.data.Dataset):
     def __init__(self, training_files, segment_size, code_hop_size,
-                n_fft, num_mels, hop_size, win_size, sampling_rate, fmin,
-                fmax_loss=None, f0=None, multispkr=False,
-                f0_stats=None, f0_normalize=False):
+                n_fft, num_mels, hop_size, win_size, sampling_rate, fmin, fmax_loss=None, multispkr=False, f0_stats=None, f0_normalize=False):
         """
         Args:
             training_files - Audio file path list & Content code NDArray list
-            multispkr - 'Not use speaker' if False else 'How to access speaker name'
+            multispkr :: str - How to access speaker name
 
             f0_normalize - Whether to normalize fo
         """
         random.seed(1234)
         self.audio_files, self.codes = training_files
-        self.segment_size, self.code_hop_size, self.sampling_rate = segment_size, code_hop_size, sampling_rate
+        self.segment_size, self.code_hop_size, self.sampling_rate, self.f0_normalize = segment_size, code_hop_size, sampling_rate, f0_normalize
         # `mel_spectrogram` specific values
         self.n_fft, self.num_mels, self.hop_size, self.win_size, self.fmin, self.fmax_loss = n_fft, num_mels, hop_size, win_size, fmin, fmax_loss
-        # Flags
-        self.f0, self.f0_normalize = f0, f0_normalize
-        self.f0_stats = torch.load(f0_stats) if f0_stats else None
+        self.f0_stats = torch.load(f0_stats)
 
-        self.multispkr = multispkr
-        if self.multispkr:
-            # List of (Non-overlap) speaker names in the dataset
-            spk_names = list(set([parse_speaker(f, self.multispkr) for f in self.audio_files]))
-            spk_names.sort()
-            # how to use: `spk_name = self.id_to_spkr[spk_idx]`
-            self.id_to_spkr = spk_names
-            # how to use: `spk_idx = self.spkr_to_id[spk_name]`
-            self.spkr_to_id = {spk_name: spk_idx for spk_idx, spk_name in enumerate(self.id_to_spkr)}
+        self.spk_accessor = multispkr
+        # List of (Non-overlap) speaker names in the dataset
+        spk_names = list(set([parse_speaker(f, self.spk_accessor) for f in self.audio_files]))
+        spk_names.sort()
+        # how to use: `spk_name = self.id_to_spkr[spk_idx]`
+        self.id_to_spkr = spk_names
+        # how to use: `spk_idx = self.spkr_to_id[spk_name]`
+        self.spkr_to_id = {spk_name: spk_idx for spk_idx, spk_name in enumerate(self.id_to_spkr)}
 
     def _sample_interval(self, seqs):
         """
@@ -216,9 +211,9 @@ class CodeDataset(torch.utils.data.Dataset):
         """
         Returns:
             feats
-                code - Content code | waveform
-                f0 :: Optional[] - Fundamental frequency series, can be normalized
-                spkr :: Optional[int] - Speaker index, exist only if `multispkr` is defined
+                code - Content code
+                f0   - Fundamental frequency series, can be normalized
+                spkr - Speaker index
             audio - The waveform
             filename
             melspec - Ground-Truth melspectrogram of the wave
@@ -252,25 +247,25 @@ class CodeDataset(torch.utils.data.Dataset):
         ## Melspectrogram/Content/fo/Speaker
         melspec = mel_spectrogram(audio, self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss, center=False)
         feats['code'] = code.squeeze()
-        if self.f0:
-            # Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
-            try:
-                f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=False)
-            except:
-                f0 = np.zeros((1, 1, audio.shape[-1] // 80))
-            f0 = f0.astype(np.float32).squeeze(0)
-            # Normalization with pre-calculated statistics
-            if self.f0_normalize:
-                spkr_id = self._get_spk_idx(index).item()
-                spk_is_not_in_stats = spkr_id not in self.f0_stats
-                mean = self.f0_stats['f0_mean'] if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_mean']
-                std  = self.f0_stats['f0_std']  if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_std']
-                # Normalize non-zero components
-                ii = f0 != 0
-                f0[ii] = (f0[ii] - mean) / std
-            feats['f0'] = f0
-        if self.multispkr:
-            feats['spkr'] = self._get_spk_idx(index)
+        ## fo
+        ### Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
+        try:
+            fo = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=False)
+        except:
+            fo = np.zeros((1, 1, audio.shape[-1] // 80))
+        fo = fo.astype(np.float32).squeeze(0)
+        ### Normalization with pre-calculated statistics
+        if self.f0_normalize:
+            spkr_id = self._get_spk_idx(index).item()
+            spk_is_not_in_stats = spkr_id not in self.f0_stats
+            mean = self.f0_stats['f0_mean'] if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_mean']
+            std  = self.f0_stats['f0_std']  if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_std']
+            # Normalize non-zero components
+            ii = fo != 0
+            fo[ii] = (fo[ii] - mean) / std
+        feats['f0'] = fo
+        ## Speaker
+        feats['spkr'] = self._get_spk_idx(index)
 
         return feats, audio.squeeze(0), str(filename), melspec.squeeze()
 
@@ -280,7 +275,7 @@ class CodeDataset(torch.utils.data.Dataset):
         Returns:
             spk_idx :: NDArray[int64] - Speaker index
         """
-        spkr_name = parse_speaker(self.audio_files[uttr_idx], self.multispkr)
+        spkr_name = parse_speaker(self.audio_files[uttr_idx], self.spk_accessor)
         spk_idx = torch.LongTensor([self.spkr_to_id[spkr_name]]).view(1).numpy()
         return spk_idx
 

@@ -52,23 +52,14 @@ class CodeGenerator(Generator):
 
         # Content - Embdding
         self.emb_content = nn.Embedding(h.num_embeddings, h.embedding_dim)
-
-        # fo - None | Fixed Encoder-VQ + Learnable Embedding
-        self.use_f0 = h.get('f0', None)
-        self.quantizer = None
-        if h.get('f0_quantizer_path', None):
-            # Fixed Enc-VQ + Emb (`quantizer` + `f0_dict`)
-            assert self.use_f0, "Requires F0 set"
-            self.quantizer = FoVQVAE(AttrDict(h.f0_quantizer))
-            self.quantizer.load_state_dict(torch.load(h.f0_quantizer_path, map_location='cpu')['generator'])
-            self.quantizer.eval()
-            self.f0_dict = nn.Embedding(h.f0_quantizer['f0_vq_params']['l_bins'], h.embedding_dim)
-
-        # Speaker - None | Embedding
-        self.use_spk = h.get('multispkr', None)
-        if self.use_spk:
-            # NOTE: `num_embeddings=200` is too much. LJSpeech needs just 1, VCTK needs 109. 
-            self.spk_emb = nn.Embedding(200, h.embedding_dim)
+        # fo - Fixed Encoder-VQ + Learnable Embedding
+        self.quantizer = FoVQVAE(AttrDict(h.f0_quantizer))
+        self.quantizer.load_state_dict(torch.load(h.f0_quantizer_path, map_location='cpu')['generator'])
+        self.quantizer.eval()
+        self.emb_fo = nn.Embedding(h.f0_quantizer['f0_vq_params']['l_bins'], h.embedding_dim)
+        # Speaker - Embedding
+        # NOTE: `num_embeddings=200` is too much. LJSpeech needs just 1, VCTK needs 109. 
+        self.spk_emb = nn.Embedding(200, h.embedding_dim)
 
     @staticmethod
     def _upsample(signal, max_frames):
@@ -108,35 +99,34 @@ class CodeGenerator(Generator):
         Returns:
             wave_estim - Estimated waveform
         """
-        # PreNet
+        # Inputs
         unit_content = kwargs['code']
+        fo  = kwargs['f0']
+        spk = kwargs['spkr']
+
+        # PreNet
         ## Content - Embedding: index -> emb
         x = self.emb_content(unit_content).transpose(1, 2)
-        ## [Optional] fo
-        if self.use_f0:
-            f0 = kwargs['f0']
-            if self.quantizer:
-                # Fixed-Enc-VQ (in-place fo encoding) + Emb
-                self.quantizer.eval()
-                assert not self.quantizer.training, "VQ is in training status!!!"
-                f0_h = [x.detach() for x in self.quantizer.encoder(f0)]
-                zs   = [x.detach() for x in self.quantizer.vq(f0_h)[0]]
-                f0_h_q = self.f0_dict(zs[0].detach()).transpose(1, 2)
-                f0 = f0_h_q
-            # Up↑/Concat
-            ## `x` up↑ | `f0` up↑
-            if x.shape[-1] < f0.shape[-1]:
-                x  = self._upsample(x, f0.shape[-1])
-            else:
-                f0 = self._upsample(f0, x.shape[-1])
-            ## Concat
-            x = torch.cat([x, f0], dim=1)
-        ## [Optional] Global speaker embedding
-        if self.use_spk:
-            global_spk_emb = self.spk_emb(kwargs['spkr']).transpose(1, 2)
-            # Up↑/Concat
-            spk_emb_series = self._upsample(global_spk_emb, x.shape[-1])
-            x = torch.cat([x, spk_emb_series], dim=1)
+        ## fo - Fixed-Enc-VQ (in-place fo encoding) + Emb
+        self.quantizer.eval()
+        assert not self.quantizer.training, "VQ is in training status!!!"
+        f0_h = [x.detach() for x in self.quantizer.encoder(fo)]
+        zs   = [x.detach() for x in self.quantizer.vq(f0_h)[0]]
+        fo = self.emb_fo(zs[0].detach()).transpose(1, 2)
+        # Up↑/Concat
+        ## `x` up↑ | `f0` up↑
+        if x.shape[-1] < fo.shape[-1]:
+            x  = self._upsample(x, fo.shape[-1])
+        else:
+            fo = self._upsample(fo, x.shape[-1])
+        ## Concat
+        x = torch.cat([x, fo], dim=1)
+
+        ## Speaker - Global embedding
+        global_spk_emb = self.spk_emb(spk).transpose(1, 2)
+        # Up↑/Concat
+        spk_emb_series = self._upsample(global_spk_emb, x.shape[-1])
+        x = torch.cat([x, spk_emb_series], dim=1)
         ## [Optional] Other feature
         for k, feat in kwargs.items():
             if k in ['spkr', 'code', 'f0']:

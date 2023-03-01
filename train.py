@@ -82,9 +82,9 @@ def train(a, h):
     training_filelist, validation_filelist = get_dataset_filelist(h)
 
     trainset = CodeDataset(training_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
-                            multispkr=h.get('multispkr', None), f0=h.get('f0', None), f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
+                            multispkr=h.multispkr, f0_normalize=h.f0_normalize, f0_stats=h.f0_stats)
     validset = CodeDataset(validation_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
-                            multispkr=h.get('multispkr', None), f0=h.get('f0', None), f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
+                            multispkr=h.multispkr, f0_normalize=h.f0_normalize, f0_stats=h.f0_stats)
     train_loader = DataLoader(trainset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
     valid_loader = DataLoader(validset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
 

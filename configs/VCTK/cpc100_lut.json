@@ -28,7 +28,6 @@
     "hop_size": 256,
     "win_size": 1024,
 
-    "f0": true,
     "f0_stats": "datasets/VCTK/f0_stats.th",
     "f0_normalize": true,
 

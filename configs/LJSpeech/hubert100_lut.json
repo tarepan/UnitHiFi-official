@@ -28,7 +28,6 @@
     "hop_size": 256,
     "win_size": 1024,
 
-    "f0": true,
     "f0_stats": "datasets/LJSpeech/f0_stats.pth",
     "f0_normalize": true,
 

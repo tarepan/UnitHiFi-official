@@ -122,19 +122,16 @@ def init_worker(queue, arguments):
     else:
         file_list = parse_manifest(a.input_code_file)
         dataset = CodeDataset(file_list, -1, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size,
-                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
-                              f0=h.get('f0', None), multispkr=h.get('multispkr', None),
-                              f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
+                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss, multispkr=h.multispkr, f0_normalize=h.f0_normalize, f0_stats=h.f0_stats)
 
     if a.unseen_f0:
         dataset.f0_stats = torch.load(a.unseen_f0)
 
     os.makedirs(a.output_dir, exist_ok=True)
 
-    if h.get('multispkr', None):
-        spkrs = random.sample(range(len(dataset.id_to_spkr)), k=min(5, len(dataset.id_to_spkr)))
+    spkrs = random.sample(range(len(dataset.id_to_spkr)), k=min(5, len(dataset.id_to_spkr)))
 
-    if a.f0_stats and h.get('f0', None) is not None:
+    if a.f0_stats:
         f0_stats = torch.load(a.f0_stats)
 
     generator.eval()
@@ -180,7 +177,7 @@ def inference(item_index):
     audio = librosa.util.normalize(audio.astype(np.float32))
     write(output_file, h.sampling_rate, audio)
 
-    if h.get('multispkr', None) and a.vc:
+    if a.vc:
         if a.random_speakers:
             local_spkrs = random.sample(range(len(dataset.id_to_spkr)), k=min(5, len(dataset.id_to_spkr)))
         else:
@@ -189,7 +186,7 @@ def inference(item_index):
         for spkr_i, k in enumerate(local_spkrs):
             code['spkr'].fill_(k)
 
-            if a.f0_stats and h.get('f0', None) is not None and not h.get('f0_normalize', False):
+            if a.f0_stats and not h.f0_normalize:
                 spkr = k
                 f0 = code['f0'].clone()
 
@@ -285,9 +282,7 @@ def main():
     else:
         file_list = parse_manifest(a.input_code_file)
         dataset = CodeDataset(file_list, -1, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size,
-                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
-                              f0=h.get('f0', None), multispkr=h.get('multispkr', None),
-                              f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None))
+                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss, multispkr=h.multispkr, f0_normalize=h.f0_normalize, f0_stats=h.f0_stats)
 
     if a.debug:
         ids = list(range(1))
