@@ -138,7 +138,7 @@ To parse output:
 ```
 
 ### 3. Encoder<sub>f<sub>o</sub></sub> training
-Train f<sub>o</sub> VQVAE (`Quantizer`) for Encoder<sub>f<sub>o</sub></sub>:
+Train f<sub>o</sub> VQVAE for Encoder<sub>f<sub>o</sub></sub>:
 ```bash
 python train_f0_vq.py \
 --checkpoint_path checkpoints/lj_f0_vq \

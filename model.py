@@ -8,7 +8,7 @@ from modules.vq import Bottleneck
 from models import Generator
 
 
-class Quantizer(nn.Module):
+class FoVQVAE(nn.Module):
     """fo VQVAE.
     
     Used for Encoder_fo training & Decoder training
@@ -26,17 +26,17 @@ class Quantizer(nn.Module):
             kwargs
                 f0 - Ground-Truth fo
         Returns:
-            reconst - Reconstructed fo
+            out_estim - Reconstructed fo
             commit_losses - VQ commitment loss
             metrics - VQ metrics
         """
         # Ground-Truth is ristricted to fo
-        gt = kwargs['f0']
-        f0_h = self.encoder(gt)
+        in_gt = kwargs['f0']
+        f0_h = self.encoder(in_gt)
         _, f0_h_q, commit_losses, metrics = self.vq(f0_h)
-        reconst = self.decoder(f0_h_q)
+        out_estim = self.decoder(f0_h_q)
 
-        return reconst, commit_losses, metrics
+        return out_estim, commit_losses, metrics
 
 
 class CodeGenerator(Generator):
@@ -75,7 +75,7 @@ class CodeGenerator(Generator):
         if h.get('f0_quantizer_path', None):
             # Fixed Enc-VQ + Emb (`quantizer` + `f0_dict`)
             assert self.use_f0, "Requires F0 set"
-            self.quantizer = Quantizer(AttrDict(h.f0_quantizer))
+            self.quantizer = FoVQVAE(AttrDict(h.f0_quantizer))
             self.quantizer.load_state_dict(torch.load(h.f0_quantizer_path, map_location='cpu')['generator'])
             self.quantizer.eval()
             self.f0_dict = nn.Embedding(h.f0_quantizer['f0_vq_params']['l_bins'], h.embedding_dim)

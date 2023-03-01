@@ -16,11 +16,9 @@ import json
 import torch
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DistributedSampler, DataLoader
-from torch.distributed import init_process_group
-from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader
 from dataset import F0Dataset, get_dataset_filelist
-from model import Quantizer
+from model import FoVQVAE
 from utils import scan_checkpoint, load_checkpoint, save_checkpoint, build_env, AttrDict
 
 torch.backends.cudnn.benchmark = True
@@ -28,7 +26,7 @@ torch.backends.cudnn.benchmark = True
 
 def train(a, h):
     """
-    Model: `Quantizer`
+    Model: `FoVQVAE`
     Optim: `AdamW`
     Sched: `ExponentialLR`
     Data:  `F0Dataset`
@@ -38,12 +36,12 @@ def train(a, h):
     torch.cuda.manual_seed(h.seed)
     device = torch.device('cuda')
 
-    generator = Quantizer(h).to(device)
-    print(generator)
+    vqvae = FoVQVAE(h).to(device)
+    print(vqvae)
 
     # Restore (1/2)
     os.makedirs(a.checkpoint_path, exist_ok=True)
-    print("checkpoints directory : ", a.checkpoint_path)
+    print(f"checkpoints directory : {a.checkpoint_path}")
     cp_g = None
     if os.path.isdir(a.checkpoint_path):
         cp_g = scan_checkpoint(a.checkpoint_path, 'g_')
@@ -53,12 +51,12 @@ def train(a, h):
         state_dict_g = None
     else:
         state_dict_g = load_checkpoint(cp_g, device)
-        generator.load_state_dict(state_dict_g['generator'])
+        vqvae.load_state_dict(state_dict_g['generator'])
         steps = state_dict_g['steps'] + 1
         last_epoch = state_dict_g['epoch']
 
     # Init & Restore (2/2)
-    optim_g = torch.optim.AdamW(generator.parameters(), h.learning_rate, betas=[h.adam_b1, h.adam_b2])
+    optim_g = torch.optim.AdamW(vqvae.parameters(), h.learning_rate, betas=[h.adam_b1, h.adam_b2])
     if state_dict_g is not None:
         optim_g.load_state_dict(state_dict_g['optim_g'])
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=h.lr_decay, last_epoch=last_epoch)
@@ -77,24 +75,25 @@ def train(a, h):
     # Logger
     sw = SummaryWriter(os.path.join(a.checkpoint_path, 'logs'))
 
-    generator.train()
+    vqvae.train()
     for epoch in range(max(0, last_epoch), a.training_epochs):
         #### Epoch ###################################################################################
         start = time.time()
         print(f"Epoch: {epoch + 1}")
 
-        for i, batch in enumerate(train_loader):
+        for batch in train_loader:
             #### Step ############################################################################
             start_b = time.time()
             optim_g.zero_grad()
 
+            # I/O
             fo = batch
             fo = fo.to(device, non_blocking=True)
-            x, y = {'f0': fo}, fo
+            in_fo, fo_gt = {'f0': fo}, fo
 
             # Forward/Loss/Backward/Optim
-            y_g_hat, commit_losses, metrics = generator(**x)
-            loss_total = F.mse_loss(y_g_hat, y) + lambda_commit * commit_losses[0]
+            fo_estim, commit_losses, metrics = vqvae(**in_fo)
+            loss_total = F.mse_loss(fo_estim, fo_gt) + lambda_commit * commit_losses[0]
             loss_total.backward()
             optim_g.step()
 
@@ -105,7 +104,7 @@ def train(a, h):
             ## checkpointing
             if steps % a.checkpoint_interval == 0 and steps != 0:
                 checkpoint_path = "{}/g_{:08d}".format(a.checkpoint_path, steps)
-                save_checkpoint(checkpoint_path, {'generator': generator.state_dict(), 'optim_g': optim_g.state_dict(), 'steps': steps, 'epoch': epoch})
+                save_checkpoint(checkpoint_path, {'generator': vqvae.state_dict(), 'optim_g': optim_g.state_dict(), 'steps': steps, 'epoch': epoch})
             ## Tensorboard summary logging
             if steps % a.summary_interval == 0:
                 commit_loss = commit_losses[0]
@@ -117,7 +116,7 @@ def train(a, h):
                 sw.add_scalar("training/usage",     metric['usage'].item(),     steps)
             ## Validation
             if steps % a.validation_interval == 0:
-                generator.eval()
+                vqvae.eval()
                 torch.cuda.empty_cache()
                 val_err_tot = 0
                 with torch.no_grad():
@@ -125,15 +124,14 @@ def train(a, h):
                         # Items
                         fo = batch
                         fo = fo.to(device, non_blocking=True)
-                        x, y = {'f0': fo}, fo
+                        in_fo, fo_gt = {'f0': fo}, fo
                         # Forward/Loss
-                        y_g_hat, commit_losses, _ = generator(**x)
-                        commit_loss = commit_losses[0]
-                        val_err_tot += (F.mse_loss(y_g_hat, y).item() + lambda_commit * commit_loss)
+                        fo_estim, commit_losses, _ = vqvae(**in_fo)
+                        val_err_tot += (F.mse_loss(fo_estim, fo_gt).item() + lambda_commit * commit_losses[0])
                     val_err = val_err_tot / (j + 1)
                     sw.add_scalar("validation/mel_spec_error", val_err,   steps)
                     sw.add_scalar("validation/commit_error", commit_loss, steps)
-                generator.train()
+                vqvae.train()
             # /Validation & Logging
 
             steps += 1
