@@ -109,11 +109,11 @@ def train(a, h):
             if steps % a.summary_interval == 0:
                 commit_loss = commit_losses[0]
                 metric = metrics[0]
-                sw.add_scalar("training/gen_loss_total", loss_total,            steps)
-                sw.add_scalar("training/commit_error", commit_loss,             steps)
-                sw.add_scalar("training/used_curr", metric['used_curr'].item(), steps)
-                sw.add_scalar("training/entropy",   metric['entropy'].item(),   steps)
-                sw.add_scalar("training/usage",     metric['usage'].item(),     steps)
+                sw.add_scalar("training/loss/total",      loss_total,                 steps)
+                sw.add_scalar("training/loss/commit",     commit_loss,                steps)
+                sw.add_scalar("training/stats/used_curr", metric['used_curr'].item(), steps)
+                sw.add_scalar("training/stats/entropy",   metric['entropy'].item(),   steps)
+                sw.add_scalar("training/stats/usage",     metric['usage'].item(),     steps)
             ## Validation
             if steps % a.validation_interval == 0:
                 vqvae.eval()
@@ -129,8 +129,8 @@ def train(a, h):
                         fo_estim, commit_losses, _ = vqvae(**in_fo)
                         val_err_tot += (F.mse_loss(fo_estim, fo_gt).item() + lambda_commit * commit_losses[0])
                     val_err = val_err_tot / (j + 1)
-                    sw.add_scalar("validation/mel_spec_error", val_err,   steps)
-                    sw.add_scalar("validation/commit_error", commit_loss, steps)
+                    sw.add_scalar("validation/loss/total",  val_err,     steps)
+                    sw.add_scalar("validation/loss/commit", commit_loss, steps)
                 vqvae.train()
             # /Validation & Logging
 
