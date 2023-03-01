@@ -318,7 +318,7 @@ class F0Dataset(torch.utils.data.Dataset):
         assert sampling_rate == self.sampling_rate, f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR"
         ## Volume normalization
         audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
-        ## Clipping :: (T,) -> (1, T) -> (1, T=segment) - T=segment, if shorter than segment, first repeat
+        ## Clipping :: (T,) -> (1, T) -> (1, T=segment) - If shorter than segment, first repeat then clip
         while audio.shape[0] < self.segment_size:
             audio = np.hstack([audio, audio])
         audio = torch.FloatTensor(audio).unsqueeze(0)
