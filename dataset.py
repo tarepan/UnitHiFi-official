@@ -329,7 +329,7 @@ class F0Dataset(torch.utils.data.Dataset):
         """
         # Acquire full-length fo series :: () -> (1, Frame)
         fo_cache = self.fo_caches.get(uttr_idx)
-        if fo_cache:
+        if fo_cache is not None:
             # Cache reuse
             fo = fo_cache
         else:

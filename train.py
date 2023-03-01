@@ -85,8 +85,8 @@ def train(a, h):
                             multispkr=h.multispkr, f0_normalize=h.f0_normalize, f0_stats=h.f0_stats)
     validset = CodeDataset(validation_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
                             multispkr=h.multispkr, f0_normalize=h.f0_normalize, f0_stats=h.f0_stats)
-    train_loader = DataLoader(trainset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
-    valid_loader = DataLoader(validset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
+    train_loader = DataLoader(trainset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True, persistent_workers=True)
+    valid_loader = DataLoader(validset, num_workers=0, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True, persistent_workers=True)
 
     sw = SummaryWriter(os.path.join(a.checkpoint_path, 'logs'))
 

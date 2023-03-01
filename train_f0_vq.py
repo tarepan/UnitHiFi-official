@@ -69,8 +69,8 @@ def train(a, h):
     train_wave_paths, valid_wave_paths = train_filelist[0], valid_filelist[0]
     trainset = F0Dataset(train_wave_paths, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
     validset = F0Dataset(valid_wave_paths, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
-    train_loader = DataLoader(trainset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
-    valid_loader = DataLoader(validset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True)
+    train_loader = DataLoader(trainset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True, persistent_workers=True)
+    valid_loader = DataLoader(validset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True, persistent_workers=True)
 
     # Logger
     sw = SummaryWriter(os.path.join(a.checkpoint_path, 'logs'))
