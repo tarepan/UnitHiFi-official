@@ -94,8 +94,8 @@ def parse_manifest(manifest):
     Args:
         manifest - Path to the file containing audio file path and encoded contents
     Returns:
-        audio_files :: Path - Audio file paths
-        codes :: DNArray - Encoded contents
+        audio_files :: List[Path] - Audio file paths
+        codes :: List[NDArray[(Frame,)]] - Encoded contents
     """
     audio_files = []
     codes = []
@@ -111,7 +111,7 @@ def parse_manifest(manifest):
                     k = 'vqvae256'
                 else:
                     k = 'hubert'
-                # Read content codes
+                # Read content code :: (Frame,)
                 codes += [torch.LongTensor([int(x) for x in sample[k].split(' ')]).numpy()]
                 # Read audio file path
                 audio_files += [Path(sample["audio"])]
@@ -122,7 +122,16 @@ def parse_manifest(manifest):
 
 
 def get_dataset_filelist(h):
-    """Acquire train/val's audio file path and content code array."""
+    """Acquire train/val's audio file path and content code array.
+
+    Returns:
+        (train)
+            training_files :: List[Path]
+            training_codes :: List[NDArray[(Frame,)]]
+        (valid)
+            validation_files :: List[Path]
+            validation_codes :: List[NDArray[(Frame,)]]
+    """
     training_files, training_codes = parse_manifest(h.input_training_file)
     validation_files, validation_codes = parse_manifest(h.input_validation_file)
 
@@ -160,7 +169,7 @@ class CodeDataset(torch.utils.data.Dataset):
                 n_fft, num_mels, hop_size, win_size, sampling_rate, fmin, fmax_loss=None, multispkr=False, f0_stats=None, f0_normalize=False):
         """
         Args:
-            training_files - Audio file path list & Content code NDArray list
+            training_files :: (List[Path], List[NDArray[(Frame,)]]) - Audio file path list & Content code NDArray list
             multispkr :: str - How to access speaker name
 
             f0_normalize - Whether to normalize fo
@@ -211,14 +220,16 @@ class CodeDataset(torch.utils.data.Dataset):
         """
         Returns:
             feats
-                code - Content code
-                f0   - Fundamental frequency series, can be normalized
-                spkr - Speaker index
+                code :: (Frame,)   - Content unit series
+                f0   :: (1, Frame) - Fundamental frequency series, can be normalized
+                spkr :: (1,)       - Speaker index
             audio - The waveform
             filename
             melspec - Ground-Truth melspectrogram of the wave
         """
+        # filename::Path, code::NDArray[(Frame,)]
         filename = self.audio_files[index]
+        code = self.codes[index]
 
         # Waveform preprocessing
         ## Load :: (T,)
@@ -231,10 +242,11 @@ class CodeDataset(torch.utils.data.Dataset):
         audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
         ## Length matching - Align with hop size, and match length of audio and code
         len_audio_code_scale = audio.shape[0] // self.code_hop_size
-        matched_len_code = min(len_audio_code_scale, self.codes[index].shape[0])
-        code = self.codes[index][:matched_len_code]
-        audio = audio[:matched_len_code * self.code_hop_size]
-        assert len_audio_code_scale == code.shape[0], "Code audio mismatch"
+        len_code = code.shape[0]
+        matched_len_code = min(len_audio_code_scale, len_code)
+        matched_len_audio = matched_len_code * self.code_hop_size
+        code = code[:matched_len_code]
+        audio = audio[:matched_len_audio]
         ## Clipping :: (T,) -> (1, T) -> (1, T=segment) - If shorter than segment at first, repeat then clip
         while audio.shape[0] < self.segment_size:
             audio = np.hstack([audio, audio])
@@ -273,7 +285,7 @@ class CodeDataset(torch.utils.data.Dataset):
         """Get speaker index from utterance index.
 
         Returns:
-            spk_idx :: NDArray[int64] - Speaker index
+            spk_idx :: NDArray[(int64,)] - Speaker index
         """
         spkr_name = parse_speaker(self.audio_files[uttr_idx], self.spk_accessor)
         spk_idx = torch.LongTensor([self.spkr_to_id[spkr_name]]).view(1).numpy()
