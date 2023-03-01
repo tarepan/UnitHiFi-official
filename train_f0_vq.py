@@ -157,10 +157,10 @@ def main():
     parser.add_argument('--training_epochs', default=10000, type=int)
     parser.add_argument('--training_steps', default=400000, type=int)
     # Validation & Logging
-    parser.add_argument('--stdout_interval',     default=    5, type=int)
-    parser.add_argument('--checkpoint_interval', default=10000, type=int)
-    parser.add_argument('--summary_interval',    default=  100, type=int)
-    parser.add_argument('--validation_interval', default= 1000, type=int)
+    parser.add_argument('--stdout_interval',     default=  100, type=int) # once a few seconds
+    parser.add_argument('--summary_interval',    default= 4000, type=int) # 1% of total steps
+    parser.add_argument('--validation_interval', default= 8000, type=int) # 2% of total steps
+    parser.add_argument('--checkpoint_interval', default=10000, type=int) # once a ten minutes
 
     a = parser.parse_args()
 
