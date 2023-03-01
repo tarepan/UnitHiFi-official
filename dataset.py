@@ -9,6 +9,7 @@
 import random
 from pathlib import Path
 
+import numpy as np
 import amfm_decompy.basic_tools as basic
 import amfm_decompy.pYAAPT as pYAAPT
 import numpy as np
@@ -327,6 +328,7 @@ class F0Dataset(torch.utils.data.Dataset):
         Returns:
             fo_segment :: NDArray[(1, Frame=segment_fo)] - A segment of fundamental frequencies, can be normalized
         """
+        # np.load(f'tmp/UnitHiFi/fo/{wave_id}.npy')
         # Acquire full-length fo series :: () -> (1, Frame)
         fo_cache = self.fo_caches.get(uttr_idx)
         if fo_cache is not None:
@@ -365,6 +367,10 @@ class F0Dataset(torch.utils.data.Dataset):
             
             # Caching for reuse
             self.fo_caches[uttr_idx] = fo
+
+            # Save for future reuse
+            wave_id = self.audio_files[uttr_idx].stem
+            np.save(f'tmp/UnitHiFi/fo/{wave_id}', fo)
 
         # Clipping :: (1, Frame) -> (1, Frame=segment) - Clip enough-length fo into a segment
         clip_start = random.randint(0, fo.shape[-1] - self.segment_size_fo)
