@@ -287,19 +287,25 @@ class CodeDataset(torch.utils.data.Dataset):
 
 
 class F0Dataset(torch.utils.data.Dataset):
+    """fo generated from audio."""
     def __init__(self, wave_paths, segment_size, sampling_rate, multispkr, f0_normalize, f0_stats):
         """
         Args:
             wave_paths    :: str  - Path to the audio file
-            segment_size  :: int  - Clipping length
+            segment_size  :: int  - Clipping length, waveform scale
             sampling_rate :: int  - Configured waveform sampling rate
             multispkr     :: str  - How to access speaker name
             f0_normalize  :: bool - Whether to normalize the fo
             f0_stats      :: str  - Path to the fo statistics file
         """
         random.seed(1234)
-        self.audio_files, self.segment_size, self.sampling_rate, self.multispkr, self.f0_normalize = wave_paths, segment_size, sampling_rate, multispkr, f0_normalize
-        self.f0_stats = torch.load(f0_stats)
+        self.audio_files, self.segment_size_audio, self.sampling_rate, self.multispkr, self.fo_normalize = wave_paths, segment_size, sampling_rate, multispkr, f0_normalize
+        self.fo_stats = torch.load(f0_stats)
+        self.fo_caches = {}
+        # Clipping parameters
+        fo_hop_sec = 0.005 # 5 [msec]
+        fo_hop_size = int(sampling_rate * fo_hop_sec)
+        self.segment_size_fo = self.segment_size_audio // fo_hop_size
         # spk_idx accessor
         spkrs = list(set([parse_speaker(f, self.multispkr) for f in self.audio_files]))
         spkrs.sort()
@@ -310,39 +316,50 @@ class F0Dataset(torch.utils.data.Dataset):
         Args:
             uttr_idx - Utterance index
         Returns:
-            f0 :: NDArray[(1, Frame)] - Fundamental frequencies, can be normalized
+            fo_segment :: NDArray[(1, Frame=segment_fo)] - A segment of fundamental frequencies, can be normalized
         """
-        # Waveform preprocessing
-        ## Load :: (T,)
-        audio, sampling_rate = load_audio(self.audio_files[uttr_idx])
-        assert sampling_rate == self.sampling_rate, f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR"
-        ## Volume normalization
-        audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
-        ## Clipping :: (T,) -> (1, T) -> (1, T=segment) - If shorter than segment, first repeat then clip
-        while audio.shape[0] < self.segment_size:
-            audio = np.hstack([audio, audio])
-        audio = torch.FloatTensor(audio).unsqueeze(0)
-        clip_start = random.randint(0, audio.shape[-1] - self.segment_size)
-        audio = audio[..., clip_start : clip_start + self.segment_size]
+        # Acquire full-length fo series :: () -> (1, Frame)
+        fo_cache = self.fo_caches.get(uttr_idx)
+        if fo_cache:
+            # Cache reuse
+            fo = fo_cache
+        else:
+            # fo generation
+            ## Waveform preprocessing
+            ### Load :: (T,)
+            audio, sampling_rate = load_audio(self.audio_files[uttr_idx])
+            assert sampling_rate == self.sampling_rate, f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR"
+            ### Volume normalization
+            audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
+            ### Repeat :: (T,) -> (1, T) - If shorter than a segment, repeat until enough length
+            while audio.shape[0] < self.segment_size_audio:
+                audio = np.hstack([audio, audio])
+            audio = torch.FloatTensor(audio).unsqueeze(0)
+            ## fo extraction
+            ### Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
+            try:
+                fo = get_yaapt_f0(audio.numpy(), rate=sampling_rate, interp=False)
+            except:
+                fo = np.zeros((1, 1, audio.shape[-1] // 80))
+            fo = fo.astype(np.float32).squeeze(0)
+            ### Normalization with pre-calculated statistics
+            if self.fo_normalize:
+                spkr_id = self._get_spk_idx(uttr_idx).item()
+                spk_is_not_in_stats = spkr_id not in self.fo_stats
+                mean = self.fo_stats['f0_mean'] if spk_is_not_in_stats else self.fo_stats[spkr_id]['f0_mean']
+                std  = self.fo_stats['f0_std']  if spk_is_not_in_stats else self.fo_stats[spkr_id]['f0_std']
+                # Normalize non-zero components
+                ii = fo != 0
+                fo[ii] = (fo[ii] - mean) / std
+            
+            # Caching for reuse
+            self.fo_caches[uttr_idx] = fo
 
-        # fo generation
-        ## Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
-        try:
-            f0 = get_yaapt_f0(audio.numpy(), rate=sampling_rate, interp=False)
-        except:
-            f0 = np.zeros((1, 1, audio.shape[-1] // 80))
-        f0 = f0.astype(np.float32).squeeze(0)
-        ## Normalization with pre-calculated statistics
-        if self.f0_normalize:
-            spkr_id = self._get_spk_idx(uttr_idx).item()
-            spk_is_not_in_stats = spkr_id not in self.f0_stats
-            mean = self.f0_stats['f0_mean'] if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_mean']
-            std  = self.f0_stats['f0_std']  if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_std']
-            # Normalize non-zero components
-            ii = f0 != 0
-            f0[ii] = (f0[ii] - mean) / std
+        # Clipping :: (1, Frame) -> (1, Frame=segment) - Clip enough-length fo into a segment
+        clip_start = random.randint(0, fo.shape[-1] - self.segment_size_fo)
+        fo_segment = fo[..., clip_start : clip_start + self.segment_size_fo]
 
-        return f0
+        return fo_segment
 
     def _get_spk_idx(self, idx):
         spkr_name = parse_speaker(self.audio_files[idx], self.multispkr)
