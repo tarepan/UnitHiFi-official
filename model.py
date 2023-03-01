@@ -153,7 +153,7 @@ class CodeGenerator(Generator):
                 _, f0_h_q, f0_commit_losses, f0_metrics = self.vq(f0_h)
                 f0 = f0_h_q[0]
             elif self.quantizer:
-                # Fixed-Enc-VQ + Emb
+                # Fixed-Enc-VQ (in-place fo encoding) + Emb
                 self.quantizer.eval()
                 assert not self.quantizer.training, "VQ is in training status!!!"
                 f0_h = [x.detach() for x in self.quantizer.encoder(f0)]

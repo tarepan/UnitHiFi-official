@@ -36,8 +36,12 @@ def get_yaapt_f0(audio, rate=16000, interp=False):
     for y in audio.astype(np.float64):
         y_pad = np.pad(y.squeeze(), (to_pad, to_pad), "constant", constant_values=0)
         signal = basic.SignalObj(y_pad, rate)
-        pitch = pYAAPT.yaapt(signal, **{'frame_length': frame_length, 'frame_space': 5.0, 'nccf_thresh1': 0.25,
-                                        'tda_frame_length': 25.0})
+        # frame_length - Length of an analysis frame [msec]
+        # tda_frame_length - Length of a 'time domain analysis' frame [msec]
+        # frame_space - (maybe) hop size in time [msec]
+        # nccf_thresh1 - Threshold in 'Normalized Cross Correlation Function'
+        pitch = pYAAPT.yaapt(signal, **{'frame_length': frame_length, 'frame_space': 5.0, 'nccf_thresh1': 0.25, 'tda_frame_length': 25.0})
+        # pitch :: PitchObj
         if interp:
             f0s += [pitch.samp_interp[None, None, :]]
         else:
@@ -182,24 +186,28 @@ class CodeDataset(torch.utils.data.Dataset):
             # how to use: `spk_idx = self.spkr_to_id[spk_name]`
             self.spkr_to_id = {spk_name: spk_idx for spk_idx, spk_name in enumerate(self.id_to_spkr)}
 
-    def _sample_interval(self, seqs, seq_len=None):
+    def _sample_interval(self, seqs):
+        """
+        Args:
+            seqs - [audio] or [audio, code]
+        """
+        # N = len_audio
         N = max([v.shape[-1] for v in seqs])
-        if seq_len is None:
-            seq_len = self.segment_size if self.segment_size > 0 else N
-
+        # [1, code_hop_size]
         hops = [N // v.shape[-1] for v in seqs]
+        # lcm = code_hop_size
         lcm = np.lcm.reduce(hops)
 
         # Randomly pickup with the batch_max_steps length of the part
         interval_start = 0
-        interval_end = N // lcm - seq_len // lcm
+        interval_end = N // lcm - self.segment_size // lcm
 
         start_step = random.randint(interval_start, interval_end)
 
         new_seqs = []
         for i, v in enumerate(seqs):
             start = start_step * (lcm // hops[i])
-            end = (start_step + seq_len // lcm) * (lcm // hops[i])
+            end = start + (self.segment_size // lcm) * (lcm // hops[i])
             new_seqs += [v[..., start:end]]
 
         return new_seqs
@@ -221,19 +229,20 @@ class CodeDataset(torch.utils.data.Dataset):
         ## Load :: (T,)
         audio, sampling_rate = load_audio(filename)
         if sampling_rate != self.sampling_rate:
-            # raise ValueError(f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR")
+            # For easy inference # raise ValueError(f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR")
             import resampy
             audio = resampy.resample(audio, sampling_rate, self.sampling_rate)
         ## Normalization
         audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
         ## Length matching - Align with hop size, and match length of audio and code
+        len_audio_code_scale = audio.shape[0] // self.code_hop_size
         if self.vqvae:
-            code_length = audio.shape[0] // self.code_hop_size
+            matched_len_code = len_audio_code_scale
         else:
-            code_length = min(audio.shape[0] // self.code_hop_size, self.codes[index].shape[0])
-            code = self.codes[index][:code_length]
-        audio = audio[:code_length * self.code_hop_size]
-        assert self.vqvae or audio.shape[0] // self.code_hop_size == code.shape[0], "Code audio mismatch"
+            matched_len_code = min(len_audio_code_scale, self.codes[index].shape[0])
+            code = self.codes[index][:matched_len_code]
+        audio = audio[:matched_len_code * self.code_hop_size]
+        assert self.vqvae or len_audio_code_scale == code.shape[0], "Code audio mismatch"
         ## Clipping :: (T,) -> (1, T) -> (1, T=segment) - If shorter than segment at first, repeat then clip
         while audio.shape[0] < self.segment_size:
             audio = np.hstack([audio, audio])
@@ -324,6 +333,8 @@ class F0Dataset(torch.utils.data.Dataset):
             # Cache reuse
             fo = fo_cache
         else:
+            # TODO: fo generation as preprocessing
+
             # fo generation
             ## Waveform preprocessing
             ### Load :: (T,)
