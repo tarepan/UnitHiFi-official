@@ -52,29 +52,46 @@ def get_yaapt_f0(audio, rate=16000, interp=False):
     return f0
 
 
-def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, center=False):
+def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax):
+    """
+    Args:
+        y :: (1, T=segment) - audio
+    Returns:
+        spec - log-power mel-frequency spectrogram
+    """
+    # Warning
     if torch.min(y) < -1.:
         print('min value is ', torch.min(y))
     if torch.max(y) > 1.:
         print('max value is ', torch.max(y))
 
+    # Filters for STFT and mel
+    ## mel_basis["8000_cuda"] :: Tensor(device=device)
+    ## hann_window["cuda"] :: Tensor(device=device)
     global mel_basis, hann_window
     if fmax not in mel_basis:
+        # `librosa.filters.mel`, default  htk=False, norm='slaney'
         mel = librosa_mel_fn(sampling_rate, n_fft, num_mels, fmin, fmax)
         mel_basis[str(fmax)+'_'+str(y.device)] = torch.from_numpy(mel).float().to(y.device)
         hann_window[str(y.device)] = torch.hann_window(win_size).to(y.device)
 
-    y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
+    # Manual padding
+    ## left: centering for synthesis
+    n_pad = int((n_fft-hop_size)/2)
+    y = torch.nn.functional.pad(y.unsqueeze(1), (n_pad, n_pad), mode='reflect')
     y = y.squeeze(1)
 
+    # STFT
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[str(y.device)],
-                      center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+                      center=False, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
 
+    # linear-power spec
     spec = torch.sqrt(spec.pow(2).sum(-1)+(1e-9))
 
+    # linear-power mel-frequency spec
     spec = torch.matmul(mel_basis[str(fmax)+'_'+str(y.device)], spec)
 
-    # spectral normalize
+    # log-power mel-frequency spectrogram
     spec = torch.log(torch.clamp(spec, min=1e-5))
 
     return spec
@@ -257,8 +274,7 @@ class CodeDataset(torch.utils.data.Dataset):
 
         # Feature extraction
         ## Melspectrogram
-        melspec = mel_spectrogram(audio, self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss, center=False).squeeze()
-        ## Content
+        melspec = mel_spectrogram(audio, self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss).squeeze()
         code = code.squeeze()
         ## fo
         ### Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)

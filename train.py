@@ -175,8 +175,7 @@ def train(a, h):
 
                         out_estim = generator(**source)
                         out_mel_gt = out_mel_gt.to(device, non_blocking=False)
-                        out_mel_estim = mel_spectrogram(out_estim.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate,
-                                                        h.hop_size, h.win_size, h.fmin, h.fmax_for_loss)
+                        out_mel_estim = mel_spectrogram(out_estim.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax_for_loss)
                         val_err_tot += F.l1_loss(out_mel_gt, out_mel_estim).item()
 
                         if j <= 4:
@@ -185,8 +184,7 @@ def train(a, h):
                                 sw.add_figure('gt/y_spec_{}'.format(j), plot_spectrogram(out_mel_gt[0].cpu()), steps)
 
                             sw.add_audio('generated/y_hat_{}'.format(j), out_estim[0], steps, h.sampling_rate)
-                            y_hat_spec = mel_spectrogram(out_estim[:1].squeeze(1), h.n_fft, h.num_mels,
-                                                            h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax)
+                            y_hat_spec = mel_spectrogram(out_estim[:1].squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax)
                             sw.add_figure('generated/y_hat_spec_{}'.format(j),
                                             plot_spectrogram(y_hat_spec[:1].squeeze(0).cpu().numpy()), steps)
 
