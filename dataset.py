@@ -12,13 +12,14 @@ from pathlib import Path
 import numpy as np
 import amfm_decompy.basic_tools as basic
 import amfm_decompy.pYAAPT as pYAAPT
-import numpy as np
 import soundfile as sf
 import torch
 import torch.utils.data
 import torch.utils.data
 from librosa.filters import mel as librosa_mel_fn
 from librosa.util import normalize
+
+from multiseries import match_length, clip_segment_random
 
 MAX_WAV_VALUE = 32768.0
 
@@ -329,13 +330,14 @@ class F0Dataset(torch.utils.data.Dataset):
             f0_stats      :: str  - Path to the fo statistics file
         """
         random.seed(1234)
-        self.audio_files, self.segment_size_audio, self.sampling_rate, self.multispkr, self.fo_normalize = wave_paths, segment_size, sampling_rate, multispkr, f0_normalize
+        self.audio_files, self.segment_size, self.sampling_rate, self.multispkr, self.fo_normalize = wave_paths, segment_size, sampling_rate, multispkr, f0_normalize
         self.fo_stats = torch.load(f0_stats)
         self.fo_caches = {}
         # Clipping parameters
         fo_hop_sec = 0.005 # 5 [msec]
-        fo_hop_size = int(sampling_rate * fo_hop_sec)
-        self.segment_size_fo = self.segment_size_audio // fo_hop_size
+        self.fo_hop_size = int(sampling_rate * fo_hop_sec)
+        n_unit = np.lcm.reduce([1, self.fo_hop_size])
+        assert segment_size % n_unit == 0, f"segment_size {segment_size} should be N-times of n_unit {n_unit}"
         # spk_idx accessor
         spkrs = list(set([parse_speaker(f, self.multispkr) for f in self.audio_files]))
         spkrs.sort()
@@ -357,25 +359,20 @@ class F0Dataset(torch.utils.data.Dataset):
         else:
             # TODO: fo generation as preprocessing
 
-            # fo generation
-            ## Waveform preprocessing
-            ### Load :: (T,)
-            audio, sampling_rate = load_audio(self.audio_files[uttr_idx])
-            assert sampling_rate == self.sampling_rate, f"{sampling_rate} SR doesn't match target {self.sampling_rate} SR"
-            ### Volume normalization
+            # Waveform preprocessing :: (T,) -> (1, T) - Load/VolumeNormalize/Tensor-nize
+            audio, sr = load_audio(self.audio_files[uttr_idx])
+            assert sr == self.sampling_rate, f"{sr} SR doesn't match target {self.sampling_rate} SR"
             audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
-            ### Repeat :: (T,) -> (1, T) - If shorter than a segment, repeat until enough length
-            while audio.shape[0] < self.segment_size_audio:
-                audio = np.hstack([audio, audio])
             audio = torch.FloatTensor(audio).unsqueeze(0)
-            ## fo extraction
-            ### Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
+
+            # fo extraction
+            ## Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
             try:
-                fo = get_yaapt_f0(audio.numpy(), rate=sampling_rate, interp=False)
+                fo = get_yaapt_f0(audio.numpy(), rate=sr, interp=False)
             except:
-                fo = np.zeros((1, 1, audio.shape[-1] // 80))
+                fo = np.zeros((1, 1, audio.shape[-1] // self.fo_hop_size))
             fo = fo.astype(np.float32).squeeze(0)
-            ### Normalization with pre-calculated statistics
+            ## Normalization with pre-calculated statistics
             if self.fo_normalize:
                 spkr_id = self._get_spk_idx(uttr_idx).item()
                 spk_is_not_in_stats = spkr_id not in self.fo_stats
@@ -384,17 +381,17 @@ class F0Dataset(torch.utils.data.Dataset):
                 # Normalize non-zero components
                 ii = fo != 0
                 fo[ii] = (fo[ii] - mean) / std
-            
-            # Caching for reuse
-            self.fo_caches[uttr_idx] = fo
 
-            # Save for future reuse
+            # Length match
+            audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = self.segment_size)
+
+            # Caching/Save
+            self.fo_caches[uttr_idx] = fo
             wave_id = self.audio_files[uttr_idx].stem
             np.save(f'tmp/UnitHiFi/fo/{wave_id}', fo)
 
         # Clipping :: (1, Frame) -> (1, Frame=segment) - Clip enough-length fo into a segment
-        clip_start = random.randint(0, fo.shape[-1] - self.segment_size_fo)
-        fo_segment = fo[..., clip_start : clip_start + self.segment_size_fo]
+        fo_segment, *_ = clip_segment_random([(fo, self.fo_hop_size)], self.segment_size)
 
         return fo_segment
 
