@@ -256,10 +256,10 @@ class CodeDataset(torch.utils.data.Dataset):
         audio, code = self._sample_interval([audio, code])
 
         # Feature extraction
-        feats = {}
-        ## Melspectrogram/Content/fo/Speaker
-        melspec = mel_spectrogram(audio, self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss, center=False)
-        feats['code'] = code.squeeze()
+        ## Melspectrogram
+        melspec = mel_spectrogram(audio, self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss, center=False).squeeze()
+        ## Content
+        code = code.squeeze()
         ## fo
         ### Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
         try:
@@ -276,11 +276,15 @@ class CodeDataset(torch.utils.data.Dataset):
             # Normalize non-zero components
             ii = fo != 0
             fo[ii] = (fo[ii] - mean) / std
-        feats['f0'] = fo
         ## Speaker
-        feats['spkr'] = self._get_spk_idx(index)
+        spk_idx = self._get_spk_idx(index)
 
-        return feats, audio.squeeze(0), str(filename), melspec.squeeze()
+        feats = {
+            'f0': fo,
+            'code': code,
+            'spkr': spk_idx,
+        }
+        return feats, audio.squeeze(0), str(filename), melspec
 
     def _get_spk_idx(self, uttr_idx):
         """Get speaker index from utterance index.
