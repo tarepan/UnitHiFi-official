@@ -359,16 +359,16 @@ class F0Dataset(torch.utils.data.Dataset):
         else:
             # TODO: fo generation as preprocessing
 
-            # Waveform preprocessing :: (T,) -> (1, T) - Load/VolumeNormalize/Tensor-nize
+            # Waveform preprocessing :: (T,) -> (1, T) - Load/VolumeNormalize
             audio, sr = load_audio(self.audio_files[uttr_idx])
             assert sr == self.sampling_rate, f"{sr} SR doesn't match target {self.sampling_rate} SR"
             audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
-            audio = torch.FloatTensor(audio).unsqueeze(0)
+            audio = audio.unsqueeze(0)
 
             # fo extraction
             ## Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
             try:
-                fo = get_yaapt_f0(audio.numpy(), rate=sr, interp=False)
+                fo = get_yaapt_f0(audio, rate=sr, interp=False)
             except:
                 fo = np.zeros((1, 1, audio.shape[-1] // self.fo_hop_size))
             fo = fo.astype(np.float32).squeeze(0)
