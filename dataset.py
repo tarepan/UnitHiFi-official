@@ -212,24 +212,32 @@ class CodeDataset(torch.utils.data.Dataset):
     def _sample_interval(self, seqs):
         """
         Args:
-            seqs - [audio] or [audio, code]
+            seqs - Length-matched different-scale sequences, [audio, code]
+        Returns:
+            new_seqs - Same dimension, time shorten
         """
-        # N = len_audio
+        # N = len_reference (len_audio)
         N = max([v.shape[-1] for v in seqs])
         # [1, code_hop_size]
         hops = [N // v.shape[-1] for v in seqs]
-        # lcm = code_hop_size
+        # lcm = sample_per_unit (code_hop_size)
         lcm = np.lcm.reduce(hops)
 
         # Randomly pickup with the batch_max_steps length of the part
         interval_start = 0
+        # (len_reference // sample_per_unit) - (len_segment // sample_per_unit)
+        #            =  n_unit  -     segment_size_unit 
         interval_end = N // lcm - self.segment_size // lcm
 
         start_step = random.randint(interval_start, interval_end)
 
         new_seqs = []
         for i, v in enumerate(seqs):
+            #       start_step * (sample_per_unit // hop)
+            #     = start_step *  frame_per_unit
             start = start_step * (lcm // hops[i])
+            # start + (len_segment // sample_per_unit) * (sample_per_unit // hop)
+            #   = start +          n_unit            *   frame_per_unit
             end = start + (self.segment_size // lcm) * (lcm // hops[i])
             new_seqs += [v[..., start:end]]
 
