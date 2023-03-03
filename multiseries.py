@@ -72,6 +72,6 @@ def clip_segment_random(serieses_hops, len_segment: int):
     hops     = list(map(lambda series_hop: series_hop[1], serieses_hops))
 
     # len_series [frame] * hop [sample/frame] - len_segment [sample]
-    start = random.randint(0, serieses[0].shape(-1) * hops[0] - len_segment)
+    start = random.randint(0, serieses[0].shape[-1] * hops[0] - len_segment)
 
     return clip_segment(serieses_hops, len_segment, start)
