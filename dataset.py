@@ -212,6 +212,9 @@ class CodeDataset(torch.utils.data.Dataset):
         self.n_fft, self.num_mels, self.hop_size, self.win_size, self.fmin, self.fmax_loss = n_fft, num_mels, hop_size, win_size, fmin, fmax_loss
         self.f0_stats = torch.load(f0_stats)
 
+        fo_hop_sec = 0.005 # 5 [msec]
+        self.fo_hop_size = int(sampling_rate * fo_hop_sec)
+
         self.spk_accessor = multispkr
         # List of (Non-overlap) speaker names in the dataset
         spk_names = list(set([parse_speaker(f, self.spk_accessor) for f in self.audio_files]))
@@ -220,40 +223,6 @@ class CodeDataset(torch.utils.data.Dataset):
         self.id_to_spkr = spk_names
         # how to use: `spk_idx = self.spkr_to_id[spk_name]`
         self.spkr_to_id = {spk_name: spk_idx for spk_idx, spk_name in enumerate(self.id_to_spkr)}
-
-    def _sample_interval(self, seqs):
-        """
-        Args:
-            seqs - Length-matched different-scale sequences, [audio, code]
-        Returns:
-            new_seqs - Same dimension, time shorten
-        """
-        # N = len_reference (len_audio)
-        N = max([v.shape[-1] for v in seqs])
-        # [1, code_hop_size]
-        hops = [N // v.shape[-1] for v in seqs]
-        # lcm = sample_per_unit (code_hop_size)
-        lcm = np.lcm.reduce(hops)
-
-        # Randomly pickup with the batch_max_steps length of the part
-        interval_start = 0
-        # (len_reference // sample_per_unit) - (len_segment // sample_per_unit)
-        #            =  n_unit  -     segment_size_unit 
-        interval_end = N // lcm - self.segment_size // lcm
-
-        start_step = random.randint(interval_start, interval_end)
-
-        new_seqs = []
-        for i, v in enumerate(seqs):
-            #       start_step * (sample_per_unit // hop)
-            #     = start_step *  frame_per_unit
-            start = start_step * (lcm // hops[i])
-            # start + (len_segment // sample_per_unit) * (sample_per_unit // hop)
-            #   = start +          n_unit            *   frame_per_unit
-            end = start + (self.segment_size // lcm) * (lcm // hops[i])
-            new_seqs += [v[..., start:end]]
-
-        return new_seqs
 
     def __getitem__(self, index):
         """
@@ -279,30 +248,19 @@ class CodeDataset(torch.utils.data.Dataset):
             audio = resampy.resample(audio, sampling_rate, self.sampling_rate)
         ## Normalization
         audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
-        ## Length matching - Align with hop size, and match length of audio and code
-        len_audio_code_scale = audio.shape[0] // self.code_hop_size
-        len_code = code.shape[0]
-        matched_len_code = min(len_audio_code_scale, len_code)
-        matched_len_audio = matched_len_code * self.code_hop_size
-        code = code[:matched_len_code]
-        audio = audio[:matched_len_audio]
-        ## Clipping :: (T,) -> (1, T) -> (1, T=segment) - If shorter than segment at first, repeat then clip
-        while audio.shape[0] < self.segment_size:
-            audio = np.hstack([audio, audio])
-            code  = np.hstack([code, code])
-        audio = torch.FloatTensor(audio).unsqueeze(0)
-        audio, code = self._sample_interval([audio, code])
+        audio = np.expand_dims(audio, axis=0)
 
         # Feature extraction
         ## Melspectrogram
-        melspec = mel_spectrogram(audio, self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss).squeeze()
+        melspec = mel_spectrogram(torch.FloatTensor(audio), self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss)
+        melspec = melspec.squeeze().numpy()
         code = code.squeeze()
         ## fo
         ### Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
         try:
-            fo = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=False)
+            fo = get_yaapt_f0(audio, rate=self.sampling_rate, interp=False)
         except:
-            fo = np.zeros((1, 1, audio.shape[-1] // 80))
+            fo = np.zeros((1, 1, audio.shape[-1] // self.fo_hop_size))
         fo = fo.astype(np.float32).squeeze(0)
         ### Normalization with pre-calculated statistics
         spkr_id = self._get_spk_idx(index).item()
@@ -311,22 +269,27 @@ class CodeDataset(torch.utils.data.Dataset):
         ## Speaker
         spk_idx = self._get_spk_idx(index)
 
+        ## Length matching
+        audio, code, melspec, fo = match_length([(audio, 1), (code, self.code_hop_size), (melspec, self.hop_size), (fo, self.fo_hop_size)], self.segment_size)
+
+        # Clipping
+        audio, code, melspec, fo = clip_segment_random([(audio, 1), (code, self.code_hop_size), (melspec, self.hop_size), (fo, self.fo_hop_size)], self.segment_size)
+
         feats = {
-            'f0': fo,
-            'code': code,
-            'spkr': spk_idx,
+            'f0':   torch.FloatTensor(fo),
+            'code': torch.LongTensor(code),
+            'spkr': torch.LongTensor(spk_idx),
         }
-        return feats, audio.squeeze(0), str(filename), melspec
+        return feats, torch.FloatTensor(audio).squeeze(0), str(filename), torch.FloatTensor(melspec)
 
     def _get_spk_idx(self, uttr_idx):
         """Get speaker index from utterance index.
 
         Returns:
-            spk_idx :: NDArray[(int64,)] - Speaker index
+            :: NDArray[(int64,)] - Speaker index
         """
         spkr_name = parse_speaker(self.audio_files[uttr_idx], self.spk_accessor)
-        spk_idx = torch.LongTensor([self.spkr_to_id[spkr_name]]).view(1).numpy()
-        return spk_idx
+        return torch.LongTensor([self.spkr_to_id[spkr_name]]).view(1).numpy()
 
     def __len__(self):
         return len(self.audio_files)
