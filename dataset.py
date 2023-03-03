@@ -19,6 +19,7 @@ import torch.utils.data
 from librosa.filters import mel as librosa_mel_fn
 from librosa.util import normalize
 
+from preprocess import normalize_nonzero
 from multiseries import match_length, clip_segment_random
 
 MAX_WAV_VALUE = 32768.0
@@ -371,24 +372,16 @@ class F0Dataset(torch.utils.data.Dataset):
             audio, sr = load_audio(self.audio_files[uttr_idx])
             assert sr == self.sampling_rate, f"{sr} SR doesn't match target {self.sampling_rate} SR"
             audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
-            audio = audio.unsqueeze(0)
 
-            # fo extraction
-            ## Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
+            # fo Estimation/Normalization :: (1, T) -> (1, 1, Frame) -> (1, Frame) -> (1, Frame)
             try:
                 fo = get_yaapt_f0(audio, rate=sr, interp=False)
             except:
                 fo = np.zeros((1, 1, audio.shape[-1] // self.fo_hop_size))
             fo = fo.astype(np.float32).squeeze(0)
-            ## Normalization with pre-calculated statistics
-            if self.fo_normalize:
-                spkr_id = self._get_spk_idx(uttr_idx).item()
-                spk_is_not_in_stats = spkr_id not in self.fo_stats
-                mean = self.fo_stats['f0_mean'] if spk_is_not_in_stats else self.fo_stats[spkr_id]['f0_mean']
-                std  = self.fo_stats['f0_std']  if spk_is_not_in_stats else self.fo_stats[spkr_id]['f0_std']
-                # Normalize non-zero components
-                ii = fo != 0
-                fo[ii] = (fo[ii] - mean) / std
+            spkr_id = self._get_spk_idx(uttr_idx).item()
+            stats = self.fo_stats if (spkr_id not in self.fo_stats) else self.fo_stats[spkr_id]
+            fo = normalize_nonzero(fo, stats['f0_mean'], stats['f0_std'])
 
             # Length match
             audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = self.segment_size)
