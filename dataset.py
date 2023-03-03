@@ -58,9 +58,9 @@ def extract_fo(audio, sr: int):
 def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax):
     """
     Args:
-        y :: (1, T=segment) - audio
+        y :: (*, T=segment) - audio
     Returns:
-        spec - log-power mel-frequency spectrogram
+        spec :: (*, Freq, Frame) - log-power mel-frequency spectrogram
     """
     # Warning
     if torch.min(y) < -1.:
@@ -81,14 +81,15 @@ def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin,
     # Manual padding
     ## left: centering for synthesis
     n_pad = int((n_fft-hop_size)/2)
-    y = torch.nn.functional.pad(y.unsqueeze(1), (n_pad, n_pad), mode='reflect')
-    y = y.squeeze(1)
+    ## For ndim=1 reflection padding
+    y = torch.nn.functional.pad(y.unsqueeze(-2), (n_pad, n_pad), mode='reflect')
+    y = y.squeeze(-2)
 
-    # STFT
+    # STFT :: (*, T) -> (*, Freq, Frame, 2)
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[str(y.device)],
                       center=False, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
 
-    # linear-power spec
+    # linear-power spec :: (*, Freq, Frame, 2) -> (*, Freq, Frame)
     spec = torch.sqrt(spec.pow(2).sum(-1)+(1e-9))
 
     # linear-power mel-frequency spec
