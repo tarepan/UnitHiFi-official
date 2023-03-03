@@ -145,7 +145,7 @@ def parse_manifest(manifest):
                 else:
                     k = 'hubert'
                 # Read content code :: (Frame,)
-                codes += [torch.LongTensor([int(x) for x in sample[k].split(' ')]).numpy()]
+                codes += [np.array([int(x) for x in sample[k].split(' ')], dtype=np.int64)]
                 # Read audio file path
                 audio_files += [Path(sample["audio"])]
             else:
@@ -211,12 +211,11 @@ class CodeDataset(torch.utils.data.Dataset):
         fo_hop_sec = 0.005 # 5 [msec]
         self.fo_hop_size = int(sampling_rate * fo_hop_sec)
         self.f0_stats = torch.load(f0_stats)
-        self.calc_mel = lambda wave_np: mel_spectrogram(torch.FloatTensor(wave_np).unsqueeze(0), n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax_loss)
+        self.calc_mel = lambda wave_np: mel_spectrogram(torch.FloatTensor(wave_np), n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax_loss).numpy()
 
         self.spk_accessor = multispkr
         # List of (Non-overlap) speaker names in the dataset
-        spk_names = list(set([parse_speaker(f, self.spk_accessor) for f in self.audio_files]))
-        spk_names.sort()
+        spk_names = sorted(set([parse_speaker(f, self.spk_accessor) for f in self.audio_files]))
         # how to use: `spk_name = self.id_to_spkr[spk_idx]` / `spk_idx = self.spkr_to_id[spk_name]`
         self.id_to_spkr = spk_names
         self.spkr_to_id = {spk_name: spk_idx for spk_idx, spk_name in enumerate(self.id_to_spkr)}
@@ -225,12 +224,12 @@ class CodeDataset(torch.utils.data.Dataset):
         """
         Returns:
             feats
-                code :: (Frame,)   - Content unit series
-                f0   :: (1, Frame) - Fundamental frequency series, can be normalized
-                spkr :: (1,)       - Speaker index
-            audio :: (T,) - The waveform
-            filename :: str - File name of the waveform
-            melspec :: (?) - Melspectrogram of the waveform
+                code :: (Frame,)        - Content unit series
+                f0   :: (Feat=1, Frame) - Fundamental frequency series, can be normalized
+                spkr :: (1,)            - Speaker index
+            audio    :: (T,)            - The waveform
+            filename :: str             - File name of the waveform
+            melspec  :: (Freq, Frame)   - Melspectrogram of the waveform
         """
         # filename::Path, code::NDArray[(Frame,)], spk_idx::int
         filename = self.audio_files[uttr_idx]
@@ -245,10 +244,10 @@ class CodeDataset(torch.utils.data.Dataset):
         audio = load_audio(filename, self.sampling_rate)
         audio = 0.95 * normalize(audio)
 
-        # Feature extraction - (T,) -> Melspec::(Freq,Frame) & fo::(Frame,) & code::(Frame,)
-        code = code.squeeze() # Pre-extracted
+        # Feature extraction - (T,) -> code::(Frame,) & Melspec::(Freq, Frame) & fo::(Frame,)
+        code = code # Pre-extracted
         fo = normalize_nonzero(extract_fo(audio, self.sampling_rate), fo_mean, fo_std)
-        melspec = self.calc_mel(audio).squeeze().numpy()
+        melspec = self.calc_mel(audio)
 
         # LengthMatch
         # TODO: What's melspec dimension? Is time last?
@@ -259,7 +258,7 @@ class CodeDataset(torch.utils.data.Dataset):
 
         feats = {
             'code': torch.LongTensor(code),
-            'f0':   torch.FloatTensor(fo),
+            'f0':   torch.FloatTensor(fo).unsqueeze(0),
             'spkr': torch.LongTensor([spk_idx]),
         }
         return feats, torch.FloatTensor(audio), str(filename), torch.FloatTensor(melspec)
