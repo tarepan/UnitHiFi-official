@@ -186,17 +186,15 @@ def parse_speaker(path, method) -> str:
 
 class CodeDataset(torch.utils.data.Dataset):
     def __init__(self, training_files, segment_size, code_hop_size,
-                n_fft, num_mels, hop_size, win_size, sampling_rate, fmin, fmax_loss=None, multispkr=False, f0_stats=None, f0_normalize=False):
+                n_fft, num_mels, hop_size, win_size, sampling_rate, fmin, fmax_loss=None, multispkr=False, f0_stats=None):
         """
         Args:
             training_files :: (List[Path], List[NDArray[(Frame,)]]) - Audio file path list & Content code NDArray list
             multispkr :: str - How to access speaker name
-
-            f0_normalize - Whether to normalize fo
         """
         random.seed(1234)
         self.audio_files, self.codes = training_files
-        self.segment_size, self.code_hop_size, self.sampling_rate, self.f0_normalize = segment_size, code_hop_size, sampling_rate, f0_normalize
+        self.segment_size, self.code_hop_size, self.sampling_rate = segment_size, code_hop_size, sampling_rate
         # `mel_spectrogram` specific values
         self.n_fft, self.num_mels, self.hop_size, self.win_size, self.fmin, self.fmax_loss = n_fft, num_mels, hop_size, win_size, fmin, fmax_loss
         self.f0_stats = torch.load(f0_stats)
@@ -294,14 +292,9 @@ class CodeDataset(torch.utils.data.Dataset):
             fo = np.zeros((1, 1, audio.shape[-1] // 80))
         fo = fo.astype(np.float32).squeeze(0)
         ### Normalization with pre-calculated statistics
-        if self.f0_normalize:
-            spkr_id = self._get_spk_idx(index).item()
-            spk_is_not_in_stats = spkr_id not in self.f0_stats
-            mean = self.f0_stats['f0_mean'] if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_mean']
-            std  = self.f0_stats['f0_std']  if spk_is_not_in_stats else self.f0_stats[spkr_id]['f0_std']
-            # Normalize non-zero components
-            ii = fo != 0
-            fo[ii] = (fo[ii] - mean) / std
+        spkr_id = self._get_spk_idx(index).item()
+        stats = self.fo_stats if (spkr_id not in self.fo_stats) else self.fo_stats[spkr_id]
+        fo = normalize_nonzero(fo, stats['f0_mean'], stats['f0_std'])
         ## Speaker
         spk_idx = self._get_spk_idx(index)
 
@@ -328,18 +321,17 @@ class CodeDataset(torch.utils.data.Dataset):
 
 class F0Dataset(torch.utils.data.Dataset):
     """fo generated from audio."""
-    def __init__(self, wave_paths, segment_size, sampling_rate, multispkr, f0_normalize, f0_stats):
+    def __init__(self, wave_paths, segment_size, sampling_rate, multispkr, f0_stats):
         """
         Args:
             wave_paths    :: str  - Path to the audio file
             segment_size  :: int  - Clipping length, waveform scale
             sampling_rate :: int  - Configured waveform sampling rate
             multispkr     :: str  - How to access speaker name
-            f0_normalize  :: bool - Whether to normalize the fo
             f0_stats      :: str  - Path to the fo statistics file
         """
         random.seed(1234)
-        self.audio_files, self.segment_size, self.sampling_rate, self.multispkr, self.fo_normalize = wave_paths, segment_size, sampling_rate, multispkr, f0_normalize
+        self.audio_files, self.segment_size, self.sampling_rate, self.multispkr = wave_paths, segment_size, sampling_rate, multispkr
         self.fo_stats = torch.load(f0_stats)
         self.fo_caches = {}
         # Clipping parameters

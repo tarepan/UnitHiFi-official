@@ -102,6 +102,9 @@ def init_worker(queue, arguments):
     json_config = json.loads(data)
     h = AttrDict(json_config)
 
+    # Deprecation
+    assert h.f0_normalize is True, "Only `f0_normalize==True` is supported."
+
     generator = CodeGenerator(h).to(idx)
     if os.path.isdir(a.checkpoint_file):
         cp_g = scan_checkpoint(a.checkpoint_file, 'g_')
@@ -122,7 +125,7 @@ def init_worker(queue, arguments):
     else:
         file_list = parse_manifest(a.input_code_file)
         dataset = CodeDataset(file_list, -1, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size,
-                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss, multispkr=h.multispkr, f0_normalize=h.f0_normalize, f0_stats=h.f0_stats)
+                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss, multispkr=h.multispkr, f0_stats=h.f0_stats)
 
     if a.unseen_f0:
         dataset.f0_stats = torch.load(a.unseen_f0)
@@ -263,6 +266,9 @@ def main():
     json_config = json.loads(data)
     h = AttrDict(json_config)
 
+    # Deprecation
+    assert h.f0_normalize is True, "Only `f0_normalize==True` is supported."
+
     if os.path.isdir(a.checkpoint_file):
         cp_g = scan_checkpoint(a.checkpoint_file, 'g_')
     else:
@@ -282,7 +288,7 @@ def main():
     else:
         file_list = parse_manifest(a.input_code_file)
         dataset = CodeDataset(file_list, -1, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size, h.win_size,
-                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss, multispkr=h.multispkr, f0_normalize=h.f0_normalize, f0_stats=h.f0_stats)
+                              h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss, multispkr=h.multispkr, f0_stats=h.f0_stats)
 
     if a.debug:
         ids = list(range(1))

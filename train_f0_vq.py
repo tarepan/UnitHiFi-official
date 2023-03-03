@@ -39,6 +39,9 @@ def train(a, h):
     vqvae = FoVQVAE(h).to(device)
     print(vqvae)
 
+    # Deprecation
+    assert h.f0_normalize is True, "Only `f0_normalize==True` is supported."
+
     # Restore (1/2)
     os.makedirs(a.checkpoint_path, exist_ok=True)
     print(f"checkpoints directory : {a.checkpoint_path}")
@@ -67,8 +70,8 @@ def train(a, h):
     # Data
     train_filelist, valid_filelist = get_dataset_filelist(h)
     train_wave_paths, valid_wave_paths = train_filelist[0], valid_filelist[0]
-    trainset = F0Dataset(train_wave_paths, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
-    validset = F0Dataset(valid_wave_paths, h.segment_size, h.sampling_rate, h.multispkr, h.f0_normalize, h.f0_stats)
+    trainset = F0Dataset(train_wave_paths, h.segment_size, h.sampling_rate, h.multispkr, h.f0_stats)
+    validset = F0Dataset(valid_wave_paths, h.segment_size, h.sampling_rate, h.multispkr, h.f0_stats)
     train_loader = DataLoader(trainset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True, persistent_workers=True)
     valid_loader = DataLoader(validset, num_workers=h.num_workers, shuffle=False, batch_size=h.batch_size, pin_memory=True, drop_last=True, persistent_workers=True)
 
