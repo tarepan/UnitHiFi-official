@@ -25,46 +25,35 @@ from multiseries import match_length, clip_segment_random
 MAX_WAV_VALUE = 32768.0
 
 
-def get_yaapt_f0(audio, rate=16000, interp=False):
-    """
+def extract_fo(audio, sr: int):
+    """Extract fundamental frequency series from a waveform.
+
     Args:
-        audio :: (B, 1, T) | (B, T) - Waveforms
+        audio :: (T,) - Waveforms
+        sr - Sampling rate of the audio
     Returns:
-        f0 :: (B, 1, Frame) - fo serieses
+        fo :: (Frame,) - fo serieses
     """
     frame_length = 20.0
-    to_pad = int(frame_length / 1000 * rate) // 2
+    to_pad = int(frame_length / 1000 * sr) // 2
 
-    # List[(1, 1, Frame)]
-    f0s = []
+    audio = audio.astype(np.float64)
+    audio = np.pad(audio, (to_pad, to_pad), "constant", constant_values=0)
 
-    # audio :: (B, 1, T) | (B, T) -> y :: (1, T) | (T,)
-    for y in audio.astype(np.float64):
+    # `pYAAPT.yaapt` :: (T,) -> (Frame,)
+    # Args:
+    #     signal :: basic.SignalObj - waveform, should be (T,), cannot accept multiple signals
+    #     frame_length     - Length of an analysis frame [msec]
+    #     tda_frame_length - Length of a 'time domain analysis' frame [msec]
+    #     frame_space      - Hop size in time [msec]
+    #     nccf_thresh1     - Threshold in 'Normalized Cross Correlation Function'
+    # Returns:
+    #     pitch :: PitchObj - Containing `.samp_values` and `.samp_interp`
+    pitch = pYAAPT.yaapt(basic.SignalObj(audio, sr), **{'frame_length': frame_length, 'frame_space': 5.0, 'nccf_thresh1': 0.25, 'tda_frame_length': 25.0})
 
-        # (1, T) | (T,) -> (T,)
-        y_pad = np.pad(y.squeeze(), (to_pad, to_pad), "constant", constant_values=0)
+    fo = pitch.samp_values.astype(np.float32)
 
-        # `pYAAPT.yaapt` :: (T,) -> (Frame,)
-        # Args:
-        #     signal :: basic.SignalObj - waveform, should be (T,), cannot accept multiple signals
-        #     frame_length     - Length of an analysis frame [msec]
-        #     tda_frame_length - Length of a 'time domain analysis' frame [msec]
-        #     frame_space      - Hop size in time [msec]
-        #     nccf_thresh1     - Threshold in 'Normalized Cross Correlation Function'
-        # Returns:
-        #     pitch :: PitchObj
-        pitch = pYAAPT.yaapt(basic.SignalObj(y_pad, rate), **{'frame_length': frame_length, 'frame_space': 5.0, 'nccf_thresh1': 0.25, 'tda_frame_length': 25.0})
-
-        # (Frame,) -> (1, 1, Frame)
-        if interp:
-            f0s += [pitch.samp_interp[None, None, :]]
-        else:
-            f0s += [pitch.samp_values[None, None, :]]
-
-    # List[(1, 1, Frame)] -> (B, 1, Frame)
-    f0 = np.vstack(f0s)
-
-    return f0
+    return fo
 
 
 def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax):
@@ -248,20 +237,18 @@ class CodeDataset(torch.utils.data.Dataset):
             audio = resampy.resample(audio, sampling_rate, self.sampling_rate)
         ## Normalization
         audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
-        audio = np.expand_dims(audio, axis=0)
 
         # Feature extraction
         ## Melspectrogram
-        melspec = mel_spectrogram(torch.FloatTensor(audio), self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss)
+        melspec = mel_spectrogram(torch.FloatTensor(audio).unsqueeze(0)), self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss)
         melspec = melspec.squeeze().numpy()
         code = code.squeeze()
         ## fo
-        ### Estimation by yaapt :: (1, T) -> (1, 1, Frame) -> (1, Frame)
+        ### Estimation by yaapt :: (T,) -> (Frame,)
         try:
-            fo = get_yaapt_f0(audio, rate=self.sampling_rate, interp=False)
+            fo = extract_fo(audio, self.sampling_rate)
         except:
-            fo = np.zeros((1, 1, audio.shape[-1] // self.fo_hop_size))
-        fo = fo.astype(np.float32).squeeze(0)
+            fo = np.zeros((audio.shape[-1] // self.fo_hop_size,), dtype=np.float32)
         ### Normalization with pre-calculated statistics
         spkr_id = self._get_spk_idx(index).item()
         stats = self.fo_stats if (spkr_id not in self.fo_stats) else self.fo_stats[spkr_id]
@@ -280,7 +267,7 @@ class CodeDataset(torch.utils.data.Dataset):
             'code': torch.LongTensor(code),
             'spkr': torch.LongTensor(spk_idx),
         }
-        return feats, torch.FloatTensor(audio).squeeze(0), str(filename), torch.FloatTensor(melspec)
+        return feats, torch.FloatTensor(audio), str(filename), torch.FloatTensor(melspec)
 
     def _get_spk_idx(self, uttr_idx):
         """Get speaker index from utterance index.
@@ -336,17 +323,16 @@ class F0Dataset(torch.utils.data.Dataset):
         else:
             # TODO: fo generation as preprocessing
 
-            # Waveform preprocessing :: (T,) -> (1, T) - Load/VolumeNormalize
+            # Waveform preprocessing :: () -> (T,) - Load/VolumeNormalize
             audio, sr = load_audio(self.audio_files[uttr_idx])
             assert sr == self.sampling_rate, f"{sr} SR doesn't match target {self.sampling_rate} SR"
             audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
 
-            # fo Estimation/Normalization :: (1, T) -> (1, 1, Frame) -> (1, Frame) -> (1, Frame)
+            # fo Estimation/Normalization :: (T,) -> (Frame,)
             try:
-                fo = get_yaapt_f0(audio, rate=sr, interp=False)
+                fo = extract_fo(audio, sr)
             except:
-                fo = np.zeros((1, 1, audio.shape[-1] // self.fo_hop_size))
-            fo = fo.astype(np.float32).squeeze(0)
+                fo = np.zeros((audio.shape[-1] // self.fo_hop_size,), dtype="float32")
             spkr_id = self._get_spk_idx(uttr_idx).item()
             stats = self.fo_stats if (spkr_id not in self.fo_stats) else self.fo_stats[spkr_id]
             fo = normalize_nonzero(fo, stats['f0_mean'], stats['f0_std'])
@@ -354,12 +340,15 @@ class F0Dataset(torch.utils.data.Dataset):
             # Length match
             audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = self.segment_size)
 
+            # Reshape :: (Frame,) -> (1, Frame)
+            fo = fo.unsqueeze(0)
+
             # Caching/Save
             self.fo_caches[uttr_idx] = fo
             wave_id = self.audio_files[uttr_idx].stem
             np.save(f'tmp/UnitHiFi/fo/{wave_id}', fo)
 
-        # Clipping :: (1, Frame) -> (1, Frame=segment) - Clip enough-length fo into a segment
+        # Clipping :: (1, Frame) -> (1, Frame=segment)
         fo_segment, *_ = clip_segment_random([(fo, self.fo_hop_size)], self.segment_size)
 
         return fo_segment
