@@ -313,7 +313,7 @@ class F0Dataset(torch.utils.data.Dataset):
             # Feature Extraction :: (T,) -> fo::(Frame,)
             fo = normalize_nonzero(extract_fo(audio, sampling_rate), fo_mean, fo_std)
 
-            # LengthMatch/Reshape :: (Frame,) -> (Frame,) -> (1, Frame)
+            # LengthMatch/Reshape :: (Frame,) -> (Frame,) -> (Feat=1, Frame)
             audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = segment_size)
             fo = fo.unsqueeze(0)
 
@@ -324,7 +324,7 @@ class F0Dataset(torch.utils.data.Dataset):
     def __getitem__(self, uttr_idx):
         """
         Returns:
-            fo_segment :: NDArray[(1, Frame=segment_fo)] - A segment of normalized fundamental frequencicy series
+            fo_segment :: NDArray[(Feat=1, Frame=segment_fo)] - A segment of normalized fundamental frequencicy series
         """
 
         # QueryFullLength/Clipping :: () -> (1, Frame) -> (1, Frame=segment)

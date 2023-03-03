@@ -30,6 +30,10 @@ class Resnet(nn.Module):
 
 
 class ResConv1DBlock(nn.Module):
+    """Conv1d in Residual connection.
+    
+    o = i + scale * [ReLU-Conv1d_k3/s1-ReLU-Conv1d_k1/s1](i)
+    """
     def __init__(self, n_in, n_state, dilation=1, zero_out=False, res_scale=1.0):
         super().__init__()
         padding = dilation
@@ -50,6 +54,7 @@ class ResConv1DBlock(nn.Module):
 
 
 class Resnet1D(nn.Module):
+    """[ReLU-Conv1d-ReLU-Conv1d]xDepth"""
     def __init__(self, n_in, n_depth, m_conv=1.0, dilation_growth_rate=1, dilation_cycle=None, zero_out=False,
                  res_scale=False, reverse_dilation=False, checkpoint_res=False):
         super().__init__()

@@ -10,11 +10,32 @@ def assert_shape(x, exp_shape):
 
 
 class EncoderConvBlock(nn.Module):
+    """[Conv1d-ResNet1D]xN + Conv1d"""
     def __init__(self, input_emb_width, output_emb_width, down_t, stride_t, width, depth, m_conv,
                  dilation_growth_rate=1, dilation_cycle=None, zero_out=False, res_scale=False):
+        """
+        Model: [Conv1d-ResNet1D]xN + Conv1d
+             = [Conv1d_sX-[ReLU-Conv1d_s1-ReLU-Conv1d_s1]xDepth]xN + Conv1d_s1
+             = [StridedConv + DeepResnet]xN + Conv1d
+
+        Args:
+            input_emb_width
+            output_emb_width
+            down_t
+            stride_t
+            width
+            depth
+            m_conv
+            dilation_growth_rate
+            dilation_cycle
+            zero_out
+            res_scale
+        """
         super().__init__()
+        # Sequential execution of blocks
         blocks = []
         if type(stride_t) is tuple or type(stride_t) is list:
+            # Model: [Conv1d-ResNet1D]xN + Conv1d
             start = True
             for s_t, d_t in zip(stride_t, down_t):
                 if s_t % 2 == 0:
@@ -25,20 +46,27 @@ class EncoderConvBlock(nn.Module):
                     for i in range(d_t):
                         block = nn.Sequential(
                             nn.Conv1d(input_emb_width if i == 0 and start else width, width, filter_t, s_t, pad_t),
-                            Resnet1D(width, depth, m_conv, dilation_growth_rate, dilation_cycle, zero_out, res_scale), )
+                            Resnet1D(width, depth, m_conv, dilation_growth_rate, dilation_cycle, zero_out, res_scale),
+                        )
+                        # [add] Conv1d-ResNet1D
                         blocks.append(block)
                         start = False
             block = nn.Conv1d(width, output_emb_width, 3, 1, 1)
+            # [add] Conv1d
             blocks.append(block)
         else:
+            # Model: [Conv1d-ResNet1D]xN + Conv1d
             filter_t, pad_t = stride_t * 2, stride_t // 2
             if down_t > 0:
                 for i in range(down_t):
                     block = nn.Sequential(
                         nn.Conv1d(input_emb_width if i == 0 else width, width, filter_t, stride_t, pad_t),
-                        Resnet1D(width, depth, m_conv, dilation_growth_rate, dilation_cycle, zero_out, res_scale), )
+                        Resnet1D(width, depth, m_conv, dilation_growth_rate, dilation_cycle, zero_out, res_scale),
+                    )
+                    # [add] Conv1d-Resnet1D
                     blocks.append(block)
                 block = nn.Conv1d(width, output_emb_width, 3, 1, 1)
+                # [add] Conv1d
                 blocks.append(block)
         self.model = nn.Sequential(*blocks)
 
@@ -92,6 +120,14 @@ class DecoderConvBock(nn.Module):
 
 class Encoder(nn.Module):
     def __init__(self, input_emb_width, output_emb_width, levels, downs_t, strides_t, **block_kwargs):
+        """
+        Args:
+            input_emb_width
+            output_emb_width
+            levels - The number of layers
+            downs_t
+            strides_t
+        """
         super().__init__()
         self.input_emb_width = input_emb_width
         self.output_emb_width = output_emb_width
@@ -111,6 +147,13 @@ class Encoder(nn.Module):
             self.level_blocks.append(level_block(level, down_t, stride_t))
 
     def forward(self, x):
+        """
+        Args:
+            x :: (B, Feat, T)
+        Returns:
+            xs :: List[(B, Feat, Frame)] - Outputs in each layers (levels)
+        """
+        # Variables for validation
         N, T = x.shape[0], x.shape[-1]
         emb = self.input_emb_width
         assert_shape(x, (N, emb, T))
