@@ -28,29 +28,42 @@ MAX_WAV_VALUE = 32768.0
 def get_yaapt_f0(audio, rate=16000, interp=False):
     """
     Args:
-        audio :: (1, T) - Waveform
+        audio :: (B, 1, T) | (B, T) - Waveforms
     Returns:
-        f0 :: (1, 1, Frame) - fo series
+        f0 :: (B, 1, Frame) - fo serieses
     """
     frame_length = 20.0
     to_pad = int(frame_length / 1000 * rate) // 2
 
+    # List[(1, 1, Frame)]
     f0s = []
+
+    # audio :: (B, 1, T) | (B, T) -> y :: (1, T) | (T,)
     for y in audio.astype(np.float64):
+
+        # (1, T) | (T,) -> (T,)
         y_pad = np.pad(y.squeeze(), (to_pad, to_pad), "constant", constant_values=0)
-        signal = basic.SignalObj(y_pad, rate)
-        # frame_length - Length of an analysis frame [msec]
-        # tda_frame_length - Length of a 'time domain analysis' frame [msec]
-        # frame_space - (maybe) hop size in time [msec]
-        # nccf_thresh1 - Threshold in 'Normalized Cross Correlation Function'
-        pitch = pYAAPT.yaapt(signal, **{'frame_length': frame_length, 'frame_space': 5.0, 'nccf_thresh1': 0.25, 'tda_frame_length': 25.0})
-        # pitch :: PitchObj
+
+        # `pYAAPT.yaapt` :: (T,) -> (Frame,)
+        # Args:
+        #     signal :: basic.SignalObj - waveform, should be (T,), cannot accept multiple signals
+        #     frame_length     - Length of an analysis frame [msec]
+        #     tda_frame_length - Length of a 'time domain analysis' frame [msec]
+        #     frame_space      - Hop size in time [msec]
+        #     nccf_thresh1     - Threshold in 'Normalized Cross Correlation Function'
+        # Returns:
+        #     pitch :: PitchObj
+        pitch = pYAAPT.yaapt(basic.SignalObj(y_pad, rate), **{'frame_length': frame_length, 'frame_space': 5.0, 'nccf_thresh1': 0.25, 'tda_frame_length': 25.0})
+
+        # (Frame,) -> (1, 1, Frame)
         if interp:
             f0s += [pitch.samp_interp[None, None, :]]
         else:
             f0s += [pitch.samp_values[None, None, :]]
 
+    # List[(1, 1, Frame)] -> (B, 1, Frame)
     f0 = np.vstack(f0s)
+
     return f0
 
 
