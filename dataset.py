@@ -8,6 +8,7 @@
 
 import random
 from pathlib import Path
+import os
 
 import numpy as np
 import amfm_decompy.basic_tools as basic
@@ -294,32 +295,40 @@ class F0Dataset(torch.utils.data.Dataset):
         assert segment_size % n_unit == 0, f"segment_size {segment_size} should be N-times of n_unit {n_unit}"
 
         # Preprocessing
-        fo_stats = torch.load(path_fo_stats)
-        ## Accessor
-        spk_names = sorted(set([parse_speaker(f, path_to_spk) for f in wave_paths]))
-        spk_name_to_idx = {spk_name: index for index, spk_name in enumerate(spk_names)}
-        ## audio-to-fo
-        for uttr_idx, path_audio in enumerate(wave_paths):
+        ## Check pre-preprocessed data
+        path_dir_fo = "tmp/UnitHiFi/foVQVAE/fo"
+        os.makedirs(path_dir_fo, exist_ok=True)
+        n_fo_files = len(os.listdir(path_dir_fo))
+        if self.n_audio == n_fo_files:
+            for uttr_idx in range(n_fo_files):
+                self.fo_caches[uttr_idx] = np.load(f'{path_dir_fo}/{uttr_idx}.npy')
+        else:
+            fo_stats = torch.load(path_fo_stats)
+            ## Accessor
+            spk_names = sorted(set([parse_speaker(f, path_to_spk) for f in wave_paths]))
+            spk_name_to_idx = {spk_name: index for index, spk_name in enumerate(spk_names)}
+            ## audio-to-fo
+            for uttr_idx, path_audio in enumerate(wave_paths):
 
-            # Speaker-specific fo statistics
-            spk_idx = spk_name_to_idx[parse_speaker(path_audio, path_to_spk)]
-            stats = fo_stats if (spk_idx not in fo_stats) else fo_stats[spk_idx]
-            fo_mean, fo_std = stats['f0_mean'], stats['f0_std']
+                # Speaker-specific fo statistics
+                spk_idx = spk_name_to_idx[parse_speaker(path_audio, path_to_spk)]
+                stats = fo_stats if (spk_idx not in fo_stats) else fo_stats[spk_idx]
+                fo_mean, fo_std = stats['f0_mean'], stats['f0_std']
 
-            # Waveform preprocessing :: () -> (T,) - Load/VolumeNormalize
-            audio = load_audio(path_audio, sampling_rate)
-            audio = 0.95 * normalize(audio)
+                # Waveform preprocessing :: () -> (T,) - Load/VolumeNormalize
+                audio = load_audio(path_audio, sampling_rate)
+                audio = 0.95 * normalize(audio)
 
-            # Feature Extraction :: (T,) -> fo::(Frame,)
-            fo = normalize_nonzero(extract_fo(audio, sampling_rate), fo_mean, fo_std)
+                # Feature Extraction :: (T,) -> fo::(Frame,)
+                fo = normalize_nonzero(extract_fo(audio, sampling_rate), fo_mean, fo_std)
 
-            # LengthMatch/Reshape :: (Frame,) -> (Frame,) -> (Feat=1, Frame)
-            audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = segment_size)
-            fo = fo.unsqueeze(0)
+                # LengthMatch/Reshape :: (Frame,) -> (Frame,) -> (Feat=1, Frame)
+                audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = segment_size)
+                fo = fo.unsqueeze(0)
 
-            # Caching/Save
-            self.fo_caches[uttr_idx] = fo
-            np.save(f'tmp/UnitHiFi/foVQVAE/fo_{uttr_idx}', fo)
+                # Caching/Save
+                self.fo_caches[uttr_idx] = fo
+                np.save(f'{path_dir_fo}/{uttr_idx}', fo)
 
     def __getitem__(self, uttr_idx):
         """
@@ -327,9 +336,8 @@ class F0Dataset(torch.utils.data.Dataset):
             fo_segment :: NDArray[(Feat=1, Frame=segment_fo)] - A segment of normalized fundamental frequencicy series
         """
 
-        # QueryFullLength/Clipping :: () -> (1, Frame) -> (1, Frame=segment)
+        # Query/Clipping :: () -> (Feat=1, Frame) -> (Feat=1, Frame=segment)
         fo = self.fo_caches.get(uttr_idx)
-        # np.load(f'tmp/UnitHiFi/foVQVAE/fo_{uttr_idx}.npy')
         fo_segment, *_ = clip_segment_random([(fo, self.fo_hop_size)], self.segment_size)
 
         return fo_segment
