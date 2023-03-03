@@ -266,76 +266,66 @@ class CodeDataset(torch.utils.data.Dataset):
 
 class F0Dataset(torch.utils.data.Dataset):
     """fo generated from audio."""
-    def __init__(self, wave_paths, segment_size, sampling_rate, multispkr, f0_stats):
+    def __init__(self, wave_paths, segment_size: int, sampling_rate: int, path_to_spk: str, path_fo_stats: str):
         """
         Args:
-            wave_paths    :: str  - Path to the audio file
-            segment_size  :: int  - Clipping length, waveform scale
-            sampling_rate :: int  - Configured waveform sampling rate
-            multispkr     :: str  - How to access speaker name
-            f0_stats      :: str  - Path to the fo statistics file
+            wave_paths :: List[str] - Path to the audio files
+            segment_size  - Clipping length, waveform scale
+            sampling_rate - Configured waveform sampling rate
+            path_to_spk   - How to access speaker name
+            path_fo_stats - Path to the fo statistics file
         """
         random.seed(1234)
-        self.audio_files, self.segment_size, self.sampling_rate, self.multispkr = wave_paths, segment_size, sampling_rate, multispkr
-        self.fo_stats = torch.load(f0_stats)
+        self.segment_size = segment_size
+        self.fo_hop_size = int(sampling_rate * 0.005) # fo_hop [sec] * sr [sample/sec] = fo_hop [sample]
+        self.n_audio = len(wave_paths)
         self.fo_caches = {}
-        # Clipping parameters
-        fo_hop_sec = 0.005 # 5 [msec]
-        self.fo_hop_size = int(sampling_rate * fo_hop_sec)
+
+        # Validation 
         n_unit = np.lcm.reduce([1, self.fo_hop_size])
         assert segment_size % n_unit == 0, f"segment_size {segment_size} should be N-times of n_unit {n_unit}"
-        # spk_idx accessor
-        spkrs = list(set([parse_speaker(f, self.multispkr) for f in self.audio_files]))
-        spkrs.sort()
-        self.spkr_to_id = {spk_name: index for index, spk_name in enumerate(spkrs)}
 
-    def __getitem__(self, uttr_idx):
-        """
-        Args:
-            uttr_idx - Utterance index
-        Returns:
-            fo_segment :: NDArray[(1, Frame=segment_fo)] - A segment of fundamental frequencies, can be normalized
-        """
-        # np.load(f'tmp/UnitHiFi/fo/{wave_id}.npy')
-        # Acquire full-length fo series :: () -> (1, Frame)
-        fo_cache = self.fo_caches.get(uttr_idx)
-        if fo_cache is not None:
-            # Cache reuse
-            fo = fo_cache
-        else:
-            # TODO: fo generation as preprocessing
+        # Preprocessing
+        fo_stats = torch.load(path_fo_stats)
+        ## Accessor
+        spk_names = sorted(set([parse_speaker(f, path_to_spk) for f in wave_paths]))
+        spk_name_to_idx = {spk_name: index for index, spk_name in enumerate(spk_names)}
+        ## audio-to-fo
+        for uttr_idx, path_audio in enumerate(wave_paths):
+
+            # Speaker-specific fo statistics
+            spk_idx = spk_name_to_idx[parse_speaker(path_audio, path_to_spk)]
+            stats = fo_stats if (spk_idx not in fo_stats) else fo_stats[spk_idx]
+            fo_mean, fo_std = stats['f0_mean'], stats['f0_std']
 
             # Waveform preprocessing :: () -> (T,) - Load/VolumeNormalize
-            audio, sr = load_audio(self.audio_files[uttr_idx])
-            assert sr == self.sampling_rate, f"{sr} SR doesn't match target {self.sampling_rate} SR"
+            audio, sr = load_audio(path_audio)
+            assert sr == sampling_rate, f"{sr} SR doesn't match target {sampling_rate} SR"
             audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
 
-            # fo Estimation/Normalization :: (T,) -> (Frame,)
-            spkr_id = self._get_spk_idx(uttr_idx).item()
-            stats = self.fo_stats if (spkr_id not in self.fo_stats) else self.fo_stats[spkr_id]
-            fo = extract_fo(audio, sr)
-            fo = normalize_nonzero(fo, stats['f0_mean'], stats['f0_std'])
+            # Feature Extraction :: (T,) -> fo::(Frame,)
+            fo = normalize_nonzero(extract_fo(audio, sr), fo_mean, fo_std)
 
-            # Length match
-            audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = self.segment_size)
-
-            # Reshape :: (Frame,) -> (1, Frame)
+            # LengthMatch/Reshape :: (Frame,) -> (Frame,) -> (1, Frame)
+            audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = segment_size)
             fo = fo.unsqueeze(0)
 
             # Caching/Save
             self.fo_caches[uttr_idx] = fo
-            wave_id = self.audio_files[uttr_idx].stem
-            np.save(f'tmp/UnitHiFi/fo/{wave_id}', fo)
+            np.save(f'tmp/UnitHiFi/foVQVAE/fo_{uttr_idx}', fo)
 
-        # Clipping :: (1, Frame) -> (1, Frame=segment)
+    def __getitem__(self, uttr_idx):
+        """
+        Returns:
+            fo_segment :: NDArray[(1, Frame=segment_fo)] - A segment of normalized fundamental frequencicy series
+        """
+
+        # QueryFullLength/Clipping :: () -> (1, Frame) -> (1, Frame=segment)
+        fo = self.fo_caches.get(uttr_idx)
+        # np.load(f'tmp/UnitHiFi/foVQVAE/fo_{uttr_idx}.npy')
         fo_segment, *_ = clip_segment_random([(fo, self.fo_hop_size)], self.segment_size)
 
         return fo_segment
 
-    def _get_spk_idx(self, idx):
-        spkr_name = parse_speaker(self.audio_files[idx], self.multispkr)
-        spkr_id = torch.LongTensor([self.spkr_to_id[spkr_name]]).view(1).numpy()
-        return spkr_id
-
     def __len__(self):
-        return len(self.audio_files)
+        return self.n_audio
