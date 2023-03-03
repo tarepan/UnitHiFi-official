@@ -324,7 +324,7 @@ class F0Dataset(torch.utils.data.Dataset):
 
                 # LengthMatch/Reshape :: (Frame,) -> (Frame,) -> (Feat=1, Frame)
                 audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = segment_size)
-                fo = fo.unsqueeze(0)
+                fo = np.expand_dims(fo, axis=0)
 
                 # Caching/Save
                 self.fo_caches[uttr_idx] = fo
