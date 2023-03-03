@@ -131,19 +131,17 @@ class Encoder(nn.Module):
         super().__init__()
         self.input_emb_width = input_emb_width
         self.output_emb_width = output_emb_width
-        self.levels = levels
+        self.levels = list(range(levels))
         self.downs_t = downs_t
         self.strides_t = strides_t
 
         block_kwargs_copy = dict(**block_kwargs)
         if 'reverse_decoder_dilation' in block_kwargs_copy:
             del block_kwargs_copy['reverse_decoder_dilation']
-        level_block = lambda level, down_t, stride_t: EncoderConvBlock(
-            input_emb_width if level == 0 else output_emb_width, output_emb_width, down_t, stride_t,
-            **block_kwargs_copy)
+        level_block = lambda level, down_t, stride_t: EncoderConvBlock(input_emb_width if level == 0 else output_emb_width, output_emb_width, down_t, stride_t, **block_kwargs_copy)
+
         self.level_blocks = nn.ModuleList()
-        iterator = zip(list(range(self.levels)), downs_t, strides_t)
-        for level, down_t, stride_t in iterator:
+        for level, down_t, stride_t in zip(self.levels, downs_t, strides_t):
             self.level_blocks.append(level_block(level, down_t, stride_t))
 
     def forward(self, x):
@@ -155,21 +153,22 @@ class Encoder(nn.Module):
         """
         # Variables for validation
         N, T = x.shape[0], x.shape[-1]
-        emb = self.input_emb_width
-        assert_shape(x, (N, emb, T))
+        assert_shape(x, (N, self.input_emb_width, T))
+
+        # Container for actual computation
         xs = []
 
-        # 64, 32, ...
-        iterator = zip(list(range(self.levels)), self.downs_t, self.strides_t)
-        for level, down_t, stride_t in iterator:
-            level_block = self.level_blocks[level]
-            x = level_block(x)
-            if type(stride_t) is tuple or type(stride_t) is list:
-                emb, T = self.output_emb_width, T // np.prod([s ** d for s, d in zip(stride_t, down_t)])
-            else:
-                emb, T = self.output_emb_width, T // (stride_t ** down_t)
-            assert_shape(x, (N, emb, T))
+        for level, down_t, stride_t in zip(self.levels, self.downs_t, self.strides_t):
+            # Actual computation
+            x = self.level_blocks[level](x)
             xs.append(x)
+
+            # Validation and variable update for it
+            if type(stride_t) is tuple or type(stride_t) is list:
+                T = T // np.prod([s ** d for s, d in zip(stride_t, down_t)])
+            else:
+                T = T // (stride_t ** down_t)
+            assert_shape(x, (N, self.output_emb_width, T))
 
         return xs
 

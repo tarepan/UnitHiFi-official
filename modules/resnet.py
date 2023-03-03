@@ -59,6 +59,9 @@ class Resnet1D(nn.Module):
                  res_scale=False, reverse_dilation=False, checkpoint_res=False):
         super().__init__()
 
+        if checkpoint_res == 1:
+            raise NotImplementedError("Checkpoint not implemented")
+
         def _get_depth(depth):
             if dilation_cycle is None:
                 return depth
@@ -72,16 +75,8 @@ class Resnet1D(nn.Module):
                   for depth in range(n_depth)]
         if reverse_dilation:
             blocks = blocks[::-1]
-        self.checkpoint_res = checkpoint_res
-        if self.checkpoint_res == 1:
-            if dist.get_rank() == 0:
-                print("Checkpointing convs")
-            self.blocks = nn.ModuleList(blocks)
-        else:
-            self.model = nn.Sequential(*blocks)
+
+        self.model = nn.Sequential(*blocks)
 
     def forward(self, x):
-        if self.checkpoint_res == 1:
-            raise NotImplementedError("Checkpoint not implemented")
-        else:
-            return self.model(x)
+        return self.model(x)
