@@ -22,8 +22,6 @@ from librosa.util import normalize
 from preprocess import normalize_nonzero
 from multiseries import match_length, clip_segment_random
 
-MAX_WAV_VALUE = 32768.0
-
 
 def extract_fo(audio, sr: int):
     """Extract fundamental frequency series from a waveform.
@@ -101,10 +99,21 @@ def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin,
     return spec
 
 
-def load_audio(full_path):
-    # TODO: Audio channel handling
-    data, sampling_rate = sf.read(full_path, dtype='int16')
-    return data, sampling_rate
+MAX_WAV_VALUE_INT16 = 2**(16-1)
+def load_audio(path_audio, ref_sr: int):
+    """Load an audio file and scale the waveform.
+    
+    Args:
+        path_audio - Path to the audio file
+        ref_sr - Expected sampling rate. If not matched, assert failed
+    Returns:
+        data - Waveform, scaled in [-1, 1]
+    """
+    # TODO: Audio channel handling - sf do not have mechanism of channel reduction and scaling (read the file as is).
+    data, sampling_rate = sf.read(path_audio, dtype='int16')
+    data = data / MAX_WAV_VALUE_INT16
+    assert sampling_rate == ref_sr, f"{sampling_rate} SR doesn't match target {ref_sr} SR"
+    return data
 
 
 mel_basis = {}
@@ -231,13 +240,12 @@ class CodeDataset(torch.utils.data.Dataset):
         fo_mean, fo_std = stats['f0_mean'], stats['f0_std']
 
         # Waveform preprocessing :: () -> (T,) - Load/VolumeNormalize
-        audio, sr = load_audio(filename)
-        assert sr == self.sampling_rate, f"{sr} SR doesn't match target {self.sampling_rate} SR"
-        audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
+        audio = load_audio(filename, self.sampling_rate)
+        audio = 0.95 * normalize(audio)
 
         # Feature extraction - (T,) -> Melspec::(Freq,Frame) & fo::(Frame,) & code::(Frame,)
         code = code.squeeze() # Pre-extracted
-        fo = normalize_nonzero(extract_fo(audio, sr), fo_mean, fo_std)
+        fo = normalize_nonzero(extract_fo(audio, self.sampling_rate), fo_mean, fo_std)
         melspec = self.calc_mel(audio).squeeze().numpy()
 
         # LengthMatch
@@ -299,12 +307,11 @@ class F0Dataset(torch.utils.data.Dataset):
             fo_mean, fo_std = stats['f0_mean'], stats['f0_std']
 
             # Waveform preprocessing :: () -> (T,) - Load/VolumeNormalize
-            audio, sr = load_audio(path_audio)
-            assert sr == sampling_rate, f"{sr} SR doesn't match target {sampling_rate} SR"
-            audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
+            audio = load_audio(path_audio, sampling_rate)
+            audio = 0.95 * normalize(audio)
 
             # Feature Extraction :: (T,) -> fo::(Frame,)
-            fo = normalize_nonzero(extract_fo(audio, sr), fo_mean, fo_std)
+            fo = normalize_nonzero(extract_fo(audio, sampling_rate), fo_mean, fo_std)
 
             # LengthMatch/Reshape :: (Frame,) -> (Frame,) -> (1, Frame)
             audio, fo = match_length([(audio, 1), (fo, self.fo_hop_size)], min_length = segment_size)
