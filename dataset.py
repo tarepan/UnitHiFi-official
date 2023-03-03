@@ -243,15 +243,10 @@ class CodeDataset(torch.utils.data.Dataset):
         melspec = mel_spectrogram(torch.FloatTensor(audio).unsqueeze(0)), self.n_fft, self.num_mels, self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss)
         melspec = melspec.squeeze().numpy()
         code = code.squeeze()
-        ## fo
-        ### Estimation by yaapt :: (T,) -> (Frame,)
-        try:
-            fo = extract_fo(audio, self.sampling_rate)
-        except:
-            fo = np.zeros((audio.shape[-1] // self.fo_hop_size,), dtype=np.float32)
-        ### Normalization with pre-calculated statistics
+        ## fo :: (T,) -> (Frame,)
         spkr_id = self._get_spk_idx(index).item()
         stats = self.fo_stats if (spkr_id not in self.fo_stats) else self.fo_stats[spkr_id]
+        fo = extract_fo(audio, self.sampling_rate)
         fo = normalize_nonzero(fo, stats['f0_mean'], stats['f0_std'])
         ## Speaker
         spk_idx = self._get_spk_idx(index)
@@ -329,12 +324,9 @@ class F0Dataset(torch.utils.data.Dataset):
             audio = 0.95 * normalize(audio / MAX_WAV_VALUE)
 
             # fo Estimation/Normalization :: (T,) -> (Frame,)
-            try:
-                fo = extract_fo(audio, sr)
-            except:
-                fo = np.zeros((audio.shape[-1] // self.fo_hop_size,), dtype="float32")
             spkr_id = self._get_spk_idx(uttr_idx).item()
             stats = self.fo_stats if (spkr_id not in self.fo_stats) else self.fo_stats[spkr_id]
+            fo = extract_fo(audio, sr)
             fo = normalize_nonzero(fo, stats['f0_mean'], stats['f0_std'])
 
             # Length match
