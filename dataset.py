@@ -198,27 +198,55 @@ def parse_speaker(path, method) -> str:
 
 
 class CodeDataset(torch.utils.data.Dataset):
-    def __init__(self, training_files, segment_size, code_hop_size,
-                n_fft, num_mels, hop_size, win_size, sampling_rate, fmin, fmax_loss=None, multispkr=False, f0_stats=None):
+    def __init__(self, training_files, segment_size, code_hop_size, n_fft, num_mels, hop_size, win_size, sampling_rate, fmin, fmax_loss, path_to_name, f0_stats):
         """
         Args:
             training_files :: (List[Path], List[NDArray[(Frame,)]]) - Audio file path list & Content code NDArray list
-            multispkr :: str - How to access speaker name
+            path_to_name :: str - How to access speaker name
         """
         random.seed(1234)
-        self.audio_files, self.codes = training_files
-        self.segment_size, self.sampling_rate, self.code_hop_size, self.mel_hop_size = segment_size, sampling_rate, code_hop_size, hop_size
-        fo_hop_sec = 0.005 # 5 [msec]
-        self.fo_hop_size = int(sampling_rate * fo_hop_sec)
-        self.f0_stats = torch.load(f0_stats)
-        self.calc_mel = lambda wave_np: mel_spectrogram(torch.FloatTensor(wave_np), n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax_loss).numpy()
+        audio_files, codes = training_files
+        self.n_audio = len(audio_files)
+        self.segment_size, self.code_hop_size, self.mel_hop_size = segment_size, code_hop_size, hop_size
+        self.fo_hop_size = int(sampling_rate * 0.005) # fo_hop [sec] * sr [sample/sec] = fo_hop [sample]
+        self.id_to_spkr = sorted(set([parse_speaker(f, path_to_name) for f in audio_files]))
 
-        self.spk_accessor = multispkr
-        # List of (Non-overlap) speaker names in the dataset
-        spk_names = sorted(set([parse_speaker(f, self.spk_accessor) for f in self.audio_files]))
-        # how to use: `spk_name = self.id_to_spkr[spk_idx]` / `spk_idx = self.spkr_to_id[spk_name]`
-        self.id_to_spkr = spk_names
-        self.spkr_to_id = {spk_name: spk_idx for spk_idx, spk_name in enumerate(self.id_to_spkr)}
+        # Preprocessing
+        ## Check pre-preprocessed data
+        self.path_dir_dec = "tmp/UnitHiFi/decoder"
+        os.makedirs(self.path_dir_dec, exist_ok=True)
+        n_dec_files = len(os.listdir(self.path_dir_dec))
+        if self.n_audio == n_dec_files:
+            print("Preprocessed data found under {path_dir_dec}. Reuse them.")
+        else:
+            ## Run preprocessing
+            fo_stats = torch.load(f0_stats)
+            spk_name_to_idx = {spk_name: spk_idx for spk_idx, spk_name in enumerate(self.id_to_spkr)}
+
+            for uttr_idx, filename in enumerate(audio_files):
+                # filename::Path, code::NDArray[(Frame,)], spk_idx::int
+                code = codes[uttr_idx]
+                spk_idx = spk_name_to_idx[parse_speaker(filename, path_to_name)]
+
+                ## Speaker-specific fo mean/std
+                stats = fo_stats if (spk_idx not in fo_stats) else fo_stats[spk_idx]
+                fo_mean, fo_std = stats['f0_mean'], stats['f0_std']
+
+                # Waveform preprocessing :: () -> (T,) - Load/VolumeNormalize
+                audio = load_audio(filename, sampling_rate)
+                audio = 0.95 * normalize(audio)
+
+                # Feature extraction - (T,) -> code::(Frame,) & Melspec::(Freq, Frame) & fo::(Feat=1, Frame)
+                code = code # Pre-extracted
+                fo = normalize_nonzero(extract_fo(audio, sampling_rate), fo_mean, fo_std)
+                fo = np.expand_dims(fo, axis=0)
+                melspec = mel_spectrogram(torch.FloatTensor(audio), n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax_loss).numpy()
+
+                # LengthMatch
+                audio, code, fo, melspec = match_length([(audio, 1), (code, self.code_hop_size), (fo, self.fo_hop_size), (melspec, self.mel_hop_size)], segment_size)
+
+                # Save
+                np.savez(f"{self.path_dir_dec}/{uttr_idx}", audio=audio, code=code, fo=fo, melspec=melspec, spk_idx=spk_idx, filename=filename)
 
     def __getitem__(self, uttr_idx: int):
         """
@@ -231,46 +259,23 @@ class CodeDataset(torch.utils.data.Dataset):
             filename :: str             - File name of the waveform
             melspec  :: (Freq, Frame)   - Melspectrogram of the waveform
         """
-        # filename::Path, code::NDArray[(Frame,)], spk_idx::int
-        filename = self.audio_files[uttr_idx]
-        code = self.codes[uttr_idx]
-        spk_idx = self._get_spk_idx(uttr_idx)
 
-        ## Speaker-specific fo mean/std
-        stats = self.fo_stats if (spk_idx not in self.fo_stats) else self.fo_stats[spk_idx]
-        fo_mean, fo_std = stats['f0_mean'], stats['f0_std']
-
-        # Waveform preprocessing :: () -> (T,) - Load/VolumeNormalize
-        audio = load_audio(filename, self.sampling_rate)
-        audio = 0.95 * normalize(audio)
-
-        # Feature extraction - (T,) -> code::(Frame,) & Melspec::(Freq, Frame) & fo::(Frame,)
-        code = code # Pre-extracted
-        fo = normalize_nonzero(extract_fo(audio, self.sampling_rate), fo_mean, fo_std)
-        melspec = self.calc_mel(audio)
-
-        # LengthMatch
-        # TODO: What's melspec dimension? Is time last?
-        audio, code, melspec, fo = match_length([(audio, 1), (code, self.code_hop_size), (melspec, self.mel_hop_size), (fo, self.fo_hop_size)], self.segment_size)
+        # Query
+        npz = np.load(f"{self.path_dir_dec}/{uttr_idx}.npz")
+        audio, code, fo, melspec, spk_idx, filename = npz.audio, npz.code, npz.fo, npz.melspec, npz.spk_idx, npz.filename
 
         # Clipping
-        audio, code, melspec, fo = clip_segment_random([(audio, 1), (code, self.code_hop_size), (melspec, self.mel_hop_size), (fo, self.fo_hop_size)], self.segment_size)
+        audio, code, fo, melspec = clip_segment_random([(audio, 1), (code, self.code_hop_size), (fo, self.fo_hop_size), (melspec, self.mel_hop_size)], self.segment_size)
 
         feats = {
             'code': torch.LongTensor(code),
-            'f0':   torch.FloatTensor(fo).unsqueeze(0),
+            'f0':   torch.FloatTensor(fo),
             'spkr': torch.LongTensor([spk_idx]),
         }
         return feats, torch.FloatTensor(audio), str(filename), torch.FloatTensor(melspec)
 
-    def _get_spk_idx(self, uttr_idx: int) -> int:
-        """Get speaker index from utterance index.
-        """
-        spkr_name = parse_speaker(self.audio_files[uttr_idx], self.spk_accessor)
-        return self.spkr_to_id[spkr_name]
-
     def __len__(self):
-        return len(self.audio_files)
+        return len(self.n_audio)
 
 
 class F0Dataset(torch.utils.data.Dataset):

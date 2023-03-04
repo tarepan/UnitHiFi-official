@@ -93,7 +93,7 @@ def train(rank, local_rank, a, h):
 
     trainset = CodeDataset(training_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
                            h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss,
-                           f0=h.get('f0', None), multispkr=h.get('multispkr', None),
+                           f0=h.get('f0', None), path_to_name=h.get('multispkr', None),
                            f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False))
 
     train_sampler = DistributedSampler(trainset) if h.num_gpus > 1 else None
@@ -103,7 +103,7 @@ def train(rank, local_rank, a, h):
 
     if rank == 0:
         validset = CodeDataset(validation_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
-                               h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss, f0=h.get('f0', None), multispkr=h.get('multispkr', None),
+                               h.win_size, h.sampling_rate, h.fmin, fmax_loss=h.fmax_for_loss, f0=h.get('f0', None), path_to_name=h.get('multispkr', None),
                                f0_normalize=h.get('f0_normalize', False), f0_stats=h.get('f0_stats', None), vqvae=h.get('code_vq_params', False))
         validation_loader = DataLoader(validset, num_workers=0, shuffle=False, sampler=None,
                                        batch_size=h.batch_size, pin_memory=True, drop_last=True)
