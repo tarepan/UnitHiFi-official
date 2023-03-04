@@ -218,9 +218,9 @@ def main():
     parser.add_argument('--training_steps', default=400000, type=int)
     # Validation & Logging
     parser.add_argument('--stdout_interval',     default=    5, type=int)
-    parser.add_argument('--checkpoint_interval', default=10000, type=int)
+    parser.add_argument('--checkpoint_interval', default=  500, type=int)
     parser.add_argument('--summary_interval',    default=  100, type=int)
-    parser.add_argument('--validation_interval', default= 1000, type=int)
+    parser.add_argument('--validation_interval', default= 4000, type=int)
 
     a = parser.parse_args()
 
