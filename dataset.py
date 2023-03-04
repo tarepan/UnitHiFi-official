@@ -262,7 +262,7 @@ class CodeDataset(torch.utils.data.Dataset):
 
         # Query
         npz = np.load(f"{self.path_dir_dec}/{uttr_idx}.npz")
-        audio, code, fo, melspec, spk_idx, filename = npz.audio, npz.code, npz.fo, npz.melspec, npz.spk_idx, npz.filename
+        audio, code, fo, melspec, spk_idx, filename = npz["audio"], npz["code"], npz["fo"], npz["melspec"], npz["spk_idx"], npz["filename"]
 
         # Clipping
         audio, code, fo, melspec = clip_segment_random([(audio, 1), (code, self.code_hop_size), (fo, self.fo_hop_size), (melspec, self.mel_hop_size)], self.segment_size)
