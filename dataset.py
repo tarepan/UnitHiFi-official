@@ -213,7 +213,7 @@ class CodeDataset(torch.utils.data.Dataset):
 
         # Preprocessing
         ## Check pre-preprocessed data
-        self.path_dir_dec = "tmp/UnitHiFi/decoder"
+        self.path_dir_dec = "tmp/UnitHiFi/decoder/set{self.n_audio}"
         os.makedirs(self.path_dir_dec, exist_ok=True)
         n_dec_files = len(os.listdir(self.path_dir_dec))
         if self.n_audio == n_dec_files:
