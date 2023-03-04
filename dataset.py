@@ -262,7 +262,7 @@ class CodeDataset(torch.utils.data.Dataset):
         """
 
         # Query
-        npz = np.load(f"{self.path_dir_dec}/{uttr_idx}.npz")
+        npz = np.load(f"{self.path_dir_dec}/{uttr_idx}.npz", allow_pickle=True)
         audio, code, fo, melspec, spk_idx, filename = npz["audio"], npz["code"], npz["fo"], npz["melspec"], npz["spk_idx"], npz["filename"]
 
         # Clipping
