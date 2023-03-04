@@ -217,8 +217,9 @@ class CodeDataset(torch.utils.data.Dataset):
         os.makedirs(self.path_dir_dec, exist_ok=True)
         n_dec_files = len(os.listdir(self.path_dir_dec))
         if self.n_audio == n_dec_files:
-            print("Preprocessed data found under {path_dir_dec}. Reuse them.")
+            print(f"Preprocessed data found under {self.path_dir_dec}. Reuse them.")
         else:
+            print(f"Preprocessed data not found. Generating...")
             ## Run preprocessing
             fo_stats = torch.load(f0_stats)
             spk_name_to_idx = {spk_name: spk_idx for spk_idx, spk_name in enumerate(self.id_to_spkr)}
@@ -305,9 +306,11 @@ class F0Dataset(torch.utils.data.Dataset):
         os.makedirs(path_dir_fo, exist_ok=True)
         n_fo_files = len(os.listdir(path_dir_fo))
         if self.n_audio == n_fo_files:
+            print(f"Preprocessed data found under {path_dir_fo}. Reuse them.")
             for uttr_idx in range(n_fo_files):
                 self.fo_caches[uttr_idx] = np.load(f'{path_dir_fo}/{uttr_idx}.npy')
         else:
+            print(f"Preprocessed data not found. Generating...")
             fo_stats = torch.load(path_fo_stats)
             ## Accessor
             spk_names = sorted(set([parse_speaker(f, path_to_spk) for f in wave_paths]))
