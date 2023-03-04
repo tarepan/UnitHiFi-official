@@ -275,7 +275,7 @@ class CodeDataset(torch.utils.data.Dataset):
         return feats, torch.FloatTensor(audio), str(filename), torch.FloatTensor(melspec)
 
     def __len__(self):
-        return len(self.n_audio)
+        return self.n_audio
 
 
 class F0Dataset(torch.utils.data.Dataset):
