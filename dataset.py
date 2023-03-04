@@ -272,7 +272,7 @@ class CodeDataset(torch.utils.data.Dataset):
         feats = {
             'code': torch.LongTensor(code),
             'f0':   torch.FloatTensor(fo),
-            'spkr': torch.LongTensor([spk_idx]),
+            'spkr': torch.LongTensor(spk_idx),
         }
         return feats, torch.FloatTensor(audio), str(filename), torch.FloatTensor(melspec)
 
