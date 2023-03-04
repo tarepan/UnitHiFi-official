@@ -302,7 +302,7 @@ class F0Dataset(torch.utils.data.Dataset):
 
         # Preprocessing
         ## Check pre-preprocessed data
-        path_dir_fo = "tmp/UnitHiFi/foVQVAE/fo"
+        path_dir_fo = f"tmp/UnitHiFi/foVQVAE/fo/set_{self.n_audio}"
         os.makedirs(path_dir_fo, exist_ok=True)
         n_fo_files = len(os.listdir(path_dir_fo))
         if self.n_audio == n_fo_files:
