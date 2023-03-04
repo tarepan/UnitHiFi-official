@@ -241,6 +241,7 @@ class CodeDataset(torch.utils.data.Dataset):
                 code = code # Pre-extracted
                 fo = normalize_nonzero(extract_fo(audio, sampling_rate), fo_mean, fo_std)
                 fo = np.expand_dims(fo, axis=0)
+                spk_idx = np.array([spk_idx], dtype=np.int64)
                 melspec = mel_spectrogram(torch.FloatTensor(audio), n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax_loss).numpy()
 
                 # LengthMatch
