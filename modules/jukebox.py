@@ -21,8 +21,8 @@ class EncoderConvBlock(nn.Module):
         Args:
             input_emb_width
             output_emb_width
-            down_t
-            stride_t
+            down_t :: List[int] | int - The number of layer in a Block
+            stride_t :: List[int] | int - Conv stride representing downsampling rate
             width
             depth
             m_conv
@@ -121,11 +121,15 @@ class DecoderConvBock(nn.Module):
 class Encoder(nn.Module):
     def __init__(self, input_emb_width, output_emb_width, levels, downs_t, strides_t, **block_kwargs):
         """
+        Model: [[Conv1d-ResNet1D]xN + Conv1d]xLevel
+             = [[Conv1d_sX-[ReLU-Conv1d_s1-ReLU-Conv1d_s1]xDepth]xN + Conv1d_s1]xLevel
+             = [[StridedConv + DeepResnet]xN + Conv1d]xLevel
+
         Args:
             input_emb_width
             output_emb_width
             levels - The number of layers
-            downs_t
+            downs_t :: List[int]
             strides_t
         """
         super().__init__()
